@@ -1,0 +1,2139 @@
+---
+title: "Non-Coding RNAs Improve the Predictive Power of Network Medicine"
+author: "Deisy Morselli Gysi and Albert-László Barabási"
+format: 
+  html:
+    toc: true
+    toc-depth: 4
+    toc-title: Contents
+    embed-resources: true
+editor: visual
+theme: Flatly
+---
+
+## Datasets
+
+### Protein-Protein Interactome (PPI)
+
+The human Protein-Protein Interactome was derived from 21 public databases containing different types of experimentally-derived PPI data, as described in the manuscript.
+
+### Protein-Protein & Non-Coding Interactome (PPI & NCI)
+
+The PPI & NCI is combined from nine publicly available databases that collect and curate experimentally-derived non-coding interactions: 1) miRNA-targets, derived from reporter assay, western blot, microarray, and next-generation sequencing experiments from mirTARbase; 2) miRNAs and lncRNAs interactions validated using CLIP-seq, AGO CLIP-seq, ChIRP-seq, HITS-CLIP and PAR-CLIP from lncBook, NPinter4, DIANA Tools, RAIN, and lncRNome; 3) RNA-RNA interactions validated from transcriptome-wide sequencing-based experiments (PARIS, SPLASH, LIGRseq, and MARIO), and targeted studies (RIAseq, RAP-RNA, and CLASH) from RISE; 4) Literature curated from miRNet and miRecords.
+
+### Gene Disease Association (GDA)
+
+Data was combined from multiple sources, as described in the manuscript, such as GWAS from ClinGen, ClinVar, CTD, Disease Enhancer, DisGeNET, GWAS Catalog, HMDD45, lncBook, LncRNA disease, LOVD, Monarch, OMIM, Orphanet, PheGenI, and PsyGeNet.
+
+## Code For Reproducing Paper Results
+
+```{r, echo=TRUE, results='hide', warning=FALSE, message=FALSE}
+############################## 
+# Install packages, if needed.
+# Load needed packages
+# Define custom needed functions
+##############################
+
+RequiredPackages <- c(
+  ## Viz
+  "gghalves",
+  "ggplot2",
+  "patchwork",
+  "showtext",
+  "ggrepel",
+  "scales",
+  "plotly",
+  "UpSetR",
+  "Cairo",
+  
+  ## Data Manipulation
+  "magrittr",
+  "data.table",
+  "tidyverse",
+  "tidyr",
+  "dplyr",
+  "janitor",
+  
+  ## Stats
+  "poweRlaw", 
+  
+  ## NetSci
+  "NetSci",
+  "igraph",
+  "CoDiNA",
+  
+  ## Others
+  "progress",
+  "stringr",
+  "knitr",
+  "parallel" 
+)
+
+
+for (i in RequiredPackages) { 
+  if (!require(i, character.only = TRUE)) install.packages(i)
+}
+
+`%ni%` <- Negate(`%in%`)
+
+############################## 
+# Define Colors
+##############################
+values =  c("Protein Coding" = "#ef476f", 
+            "TF" = "#f78c6b" ,
+            "Pseudogene" = "#06d6a0",
+            "miRNA" = "#83d483",
+            "other" = "#ffd166",
+            "lncRNA" = "#0cb0a9", 
+            "ncRNA" = "#118ab2")
+
+PPI_colors = c(PPI = "#8D3B72",
+               `PPI & NCI` = "#72E1D1")
+
+############################## 
+# Define Functions
+##############################
+
+############################## 
+# Order Alfabetically 
+##############################
+OrderNames <- function (M) {
+  M[,1] %<>% as.character()
+  M[,2] %<>% as.character()
+  n1 = apply(M[, 1:2], 1, min)
+  n2 = apply(M[, 1:2], 1, max)
+  M[,1] <- n1
+  M[,2] <- n2
+  
+  return(M)
+}
+
+############################## 
+# Plot Disease Modules
+##############################
+plot_diseases = function(disease){
+  disease_genes = GDA %>%
+    filter(DiseaseName == disease) %>%
+    pull(hgnc_symbol) %>%
+    unique()
+  V(gPPI)$frame.color = NA; 
+  V(gPPInc)$frame.color = NA
+  
+  g_disease_PPI = gPPI %>%
+    induced_subgraph(vids = 
+                       disease_genes[disease_genes %in%
+                                       V(.)$name])
+  
+  g_disease_PPINC = gPPInc %>%
+    induced_subgraph(vids =
+                       disease_genes[disease_genes %in%
+                                       V(.)$name])
+  
+  in_lcc_ncippi =  g_disease_PPINC %>%
+    extract_LCC() %>%
+    V() %>%
+    unclass() %>%
+    names
+  
+  in_lcc_ppi =  g_disease_PPI %>%
+    extract_LCC() %>%
+    V() %>%
+    unclass() %>%
+    names
+  
+  
+  V(g_disease_PPI)$degree = igraph::degree(g_disease_PPI)
+  V(g_disease_PPINC)$degree = igraph::degree(g_disease_PPINC)
+  
+  
+  
+  V(g_disease_PPI)$size =
+    igraph::degree(g_disease_PPI) %>%
+    CoDiNA::normalize() + 0.01
+  V(g_disease_PPINC)$size = 
+    igraph::degree(g_disease_PPINC) %>%
+    CoDiNA::normalize() + 0.01
+  
+  V(g_disease_PPI)$size %<>% ifelse(is.na(.), 0.5,.)
+  
+  
+  
+  E(g_disease_PPI)$width =  E(g_disease_PPI)$weight =
+    edge.betweenness(g_disease_PPI, directed = F) %>%
+    CoDiNA::normalize()
+  
+  E(g_disease_PPINC)$width = E(g_disease_PPINC)$weight =
+    edge.betweenness(g_disease_PPINC, directed = F) %>%
+    CoDiNA::normalize()
+  
+  E(g_disease_PPINC)$weight = (E(g_disease_PPINC)$weight) + 0.01
+  E(g_disease_PPI)$weight = E(g_disease_PPI)$weight+ 0.01
+  
+  
+  #
+  # fix colors
+  #
+  
+  V(g_disease_PPI)$color = 
+    ifelse(V(g_disease_PPI)$name %in% in_lcc_ppi,
+           V(g_disease_PPI)$color, "gray75")
+  V(g_disease_PPI)$frame.color =
+    V(g_disease_PPI)$color
+  ###
+  ###
+  V(g_disease_PPINC)$color = 
+    ifelse(V(g_disease_PPINC)$name %in% in_lcc_ncippi,
+           V(g_disease_PPINC)$color, "gray75")
+  V(g_disease_PPINC)$frame.color = 
+    V(g_disease_PPINC)$color
+  
+  V(g_disease_PPI)$label = 
+    ifelse(V(g_disease_PPI)$size >
+             quantile(V(g_disease_PPI)$size, 0.99),
+           V(g_disease_PPI)$name, NA)
+  
+  
+  V(g_disease_PPINC)$label = 
+    ifelse(V(g_disease_PPINC)$size > 
+             quantile(V(g_disease_PPINC)$size, 0.99), 
+           V(g_disease_PPINC)$name, NA)
+  
+  
+  
+  return(list(PPI = g_disease_PPI,
+              NCIPPI = g_disease_PPINC))
+}
+
+
+############################## 
+# Select Few Diseases as Reference
+##############################
+Interest = c("schizophrenia", 
+             "crohn disease", 
+             "arthritis rheumatoid", 
+             "pre eclampsia", 
+             "asthma", 
+             "angina pectoris")
+
+############################## 
+# Define Parameters to
+# be used in the analysis
+##############################
+sabp = 0.05 # S_ab pvalue
+lccp = 0.05 # LCC pvalue
+comop = 0.01 # RR pvalue
+overlapp = 0.01 # Hypergeometric-test p-value
+```
+
+```{r, warning=FALSE, message=FALSE}
+############################## 
+# Load the Data
+##############################
+PPI = fread("../data/input/PPI.csv") ## PPI
+glimpse(PPI)
+
+############################## 
+# PPI include: 
+# $ HGNC_Symbol.1: HGNC Gene Name for Node 1
+# $ HGNC_Symbol.2: HGNC Gene Name for Node 2
+# $ Source       : Source of the interaction, "|" separated
+##############################
+
+
+Annot_Dic = fread("../data/input/gene_dictionary.txt") ## Gene Dictionary
+glimpse(Annot_Dic)
+
+############################## 
+# Annot_Dic include:
+# $ Symbol       : HGNC Gene Name
+# $ Category_cl  : HGNC Gene Category
+# $ color        : Color Definition for Viz
+##############################
+
+## 
+## Define the nodes colors based on gene category
+## 
+
+Annot_Dic$Category_cl = factor(Annot_Dic$Category_cl, 
+                               levels = names(values))
+Annot_Dic$color = values[unclass(Annot_Dic$Category_cl)]
+
+NCPPI = fread("../data/input/ncPPI_PPI.csv") ## PPI & NCI
+glimpse(NCPPI)
+
+############################## 
+# NCPPI include: 
+# $ HGNC_Symbol.1: HGNC Gene Name for Node 1
+# $ HGNC_Symbol.2: HGNC Gene Name for Node 2
+# $ Source       : Source of the interaction, "|" separated
+##############################
+
+GDA = fread("../data/input/GDA.csv") ## Gene Disease Association
+glimpse(GDA)
+
+############################## 
+# GDA include: 
+# DiseaseName    : Disease Name in MeSH Terms
+# hgnc_symbol    : HGNC Gene Name 
+# DescriptorName : MeSH categories for the disease
+# Total_Genes    : Total of Associated Genes
+# Category_cl    : HGNC Gene Category
+##############################
+```
+
+```{r, warning=FALSE, message=FALSE}
+############################## 
+### Create the graphs: 
+### Edge list from the csv files (PPI, PPI & NCI)
+### Node list from gene annotation
+### Because the annotation may include genes that 
+### do not exist in the graph, we delete all nodes with 
+### degree = 0
+##############################
+
+### gPPI as the PPI graph
+
+gPPI = graph_from_data_frame(PPI, directed = F, 
+                             vertices = Annot_Dic) %>%
+  delete.vertices(degree(.) == 0) 
+V(gPPI)$degree = degree(gPPI)
+gPPI
+diameter(gPPI)
+
+### gPPI as the PPI & NCI graph
+gPPInc = graph_from_data_frame(NCPPI, directed = F, 
+                               vertices = Annot_Dic) %>%
+  delete.vertices(degree(.) == 0) 
+V(gPPInc)$degree = degree(gPPInc)
+gPPInc
+diameter(gPPInc)
+```
+
+### Table S1: Descriptive of Databases Genes and Reported Binding Experimental Interactions.
+
+```{r, warning=FALSE, message=FALSE, results='asis'}
+############################## 
+### Build a summary table (Table S1)
+### Include the number of genes and interaction type 
+### in each database. 
+##############################
+### Because the PPI is a subset of the 
+### PPI & NCI, we build the 
+### table only based on the PPI & NCI.
+##############################
+
+NCI = NCPPI
+n_map = Annot_Dic %>%
+  select(Symbol,Category_cl)
+NCI %<>% 
+  dplyr::left_join(n_map, by = c("HGNC_Symbol.1"="Symbol")) %>%
+  rename(Category_A = Category_cl) %>% 
+  dplyr::left_join(n_map, by = c("HGNC_Symbol.2"="Symbol")) %>%
+  rename(Category_B = Category_cl) %>%
+  unique()
+
+NCI %<>%
+  mutate(id = 1:n())
+
+NCI_PPI = NCI$Source %>%
+  stringr::str_split(., "\\|", simplify = TRUE) %>%
+  as.data.frame() %>% 
+  mutate(id = 1:n()) 
+
+NCI_PPI_l = list()
+
+
+
+y = 223
+i = nrow(NCI_PPI)/y
+
+for (k in 1:y){
+  ini = (i*(k-1) + 1)
+  end = i*k
+  NCI_PPI_l[[k]] = NCI_PPI[ini:end, ]%>%
+    pivot_longer(-id, values_to = "source") %>%
+    select(-name) %>%
+    filter(source != "") %>%
+    unique() %>%
+    dplyr::inner_join(NCI, ., by = 'id') %>%
+    select(- c(Source, id )) %>%
+    unique()
+}
+NCI_PPI_l %<>% 
+  bind_rows() %>%
+  unique()
+
+
+pc = c("Protein Coding", "TF")
+edges_summary = NCI_PPI_l %>%
+  mutate(type = ifelse(Category_A %in% pc & 
+                         Category_B %in% pc, 
+                       "PC <-> PC", "PC <-> NC")) %>%
+  
+  mutate(type = ifelse(Category_A %ni% pc & 
+                         Category_B %ni% pc, 
+                       "NC <-> NC", type)) %>%
+  group_by(source, type) %>%
+  summarise(n = n()) %>%
+  pivot_wider(names_from = type, 
+              values_from = n, 
+              values_fill = 0)
+
+nodes_summary = 
+  NCI_PPI_l %>%
+  select(-starts_with("Category")) %>% 
+  pivot_longer(cols = c(HGNC_Symbol.1, HGNC_Symbol.2)) %>%
+  select(-name) %>%
+  unique() %>% 
+  dplyr::left_join(Annot_Dic, 
+                   by = c("value"="Symbol")) %>%
+  mutate(type = 
+           ifelse(Category_cl %in% pc, "PC", "NC")) %>%
+  group_by(type, source) %>%
+  summarise(n = n()) %>%
+  pivot_wider(names_from = type, values_from = n)
+
+
+summary_data = dplyr::inner_join(nodes_summary,
+                                 edges_summary)
+
+summary_data %>% 
+  knitr::kable()
+
+```
+
+### Table S2: Degreee Median and interquartile ranges for each gene category in all two networks.
+
+```{r, results='asis'}
+##############################
+### Basic Stats of degree in both networks
+##############################
+
+n2 = gPPI %>% igraph::as_data_frame(., "vertices")
+n3 = gPPInc %>% igraph::as_data_frame(., "vertices")
+
+n2 %<>% 
+  mutate(base = "PPI")
+
+n3 %<>% 
+  mutate(base = "PPI & NCI")
+
+Nodes = bind_rows(n2, n3)
+
+
+Nodes %>%
+  group_by(Category_cl, base) %>%
+  summarise(median = quantile(degree, 0.50), 
+            Q1 =  quantile(degree, 0.250), 
+            Q3 =  quantile(degree, 0.750)) %>%
+  mutate( result = paste0(median, " [", Q1, "; ", Q3, "]")) %>%
+  select(Category_cl, base, result) %>%
+  pivot_wider(names_from = base, 
+              values_from = result) %>% 
+  knitr::kable()
+```
+
+### Figure S1: Network Validation: Gene-Interaction Overlap
+
+```{r, warning=FALSE, message=FALSE}
+##############################
+### Upset Plot of Gene-Interaction Overlap
+##############################
+
+ps1 = NCI_PPI_l %>% 
+  mutate(type = ifelse(Category_A %in% pc & 
+                         Category_B %in% pc, "PC <-> PC", "PC <-> NC")) %>%
+  
+  mutate(type = ifelse(Category_A %ni% pc & 
+                         Category_B %ni% pc, "NC <-> NC", type)) %>%
+  group_by(HGNC_Symbol.1, HGNC_Symbol.2, type, source) %>%
+  summarise(n = n()) %>% 
+  pivot_wider(names_from = source, values_from = n, values_fill = 0) %>%
+  as.data.frame() %>%
+  UpSetR::upset(., order.by = 'freq', 
+                sets.x.label = 'Interactions (links)', 
+                mainbar.y.label = 'Overlap', 
+                queries = list(list(query = elements, 
+                                    params = list("type", "PC <-> PC"), 
+                                    color = "#8D3B72", active = T)),
+                # sets.bar.color = "#72E1D1",
+                main.bar.color = "#72E1D1",
+                nsets = 100, 
+                number.angles = 30,
+                mb.ratio = c(0.5, 0.5), 
+                text.scale = 1.5)
+Cairo::CairoPDF("../figs/Fig_S1.pdf", width = 10, height = 10)
+ps1
+dev.off()
+```
+
+### Figure S2: Network Validation: Gene Overlap
+
+```{r, warning=FALSE, message=FALSE}
+##############################
+### Upset Plot of Gene Overlap
+##############################
+
+
+ps2 = NCI_PPI_l %>% 
+  select(starts_with("HGNC"),source) %>%
+  pivot_longer(-source) %>% 
+  select(-name) %>% 
+  unique() %>% 
+  dplyr::left_join(., n_map, by = c('value' = "Symbol")) %>% 
+  mutate(type = ifelse(Category_cl %in% pc, "PC", "NC")) %>% 
+  select(-Category_cl) %>%
+  group_by(value, type, source) %>% 
+  summarise(n = n()) %>% 
+  pivot_wider(names_from = source, 
+              values_from = n, 
+              values_fill = 0) %>%
+  as.data.frame() %>%
+  UpSetR::upset(., order.by = 'freq', 
+                sets.x.label = 'Genes (nodes)', 
+                mainbar.y.label = 'Overlap', 
+                # sets.bar.color = "#56B4E9",
+                # main.bar.color = "#56B4E9",
+                queries = list(list(query = elements, 
+                                    params = list("type", "PC"), 
+                                    color = "#8D3B72", active = T)),
+                # sets.bar.color = "#72E1D1",
+                main.bar.color = "#72E1D1", 
+                nsets = 100, 
+                number.angles = 30,
+                mb.ratio = c(0.5, 0.5), 
+                text.scale = 1.5)
+
+
+Cairo::CairoPDF("../figs/Fig_S2.pdf", width = 10, height = 10)
+ps2
+dev.off()
+```
+
+### Figure S3: Degree distribution of different genomic elements.
+
+```{r, warning=FALSE, message=FALSE}
+##############################
+### Degree Distribution 
+##############################
+gPPI %>%
+  degree(.) %>% 
+  data.frame(degree = ., Symbol = names(.)) %>%
+  left_join(Annot_Dic) %>% 
+  group_by(degree, Category_cl) %>% 
+  summarise(k = n()) %>% 
+  ggplot() +
+  aes(x = degree, 
+      y = k, 
+      fill = Category_cl, 
+      colour = Category_cl) +
+  geom_point() +
+  scale_fill_manual(values = values) +
+  scale_color_manual(values = values) +
+  scale_x_continuous(trans = "log10") +
+  scale_y_continuous(trans = "log10") +
+  labs(x = "Degree", y = "k", 
+       color = "Gene Category", 
+       fill = "Gene Category") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+
+gPPInc %>%
+  degree(.) %>% 
+  data.frame(degree = ., Symbol = names(.)) %>%
+  left_join(Annot_Dic) %>% 
+  group_by(degree, Category_cl) %>% 
+  summarise(k = n()) %>% 
+  ggplot() +
+  aes(x = degree, 
+      y = k, 
+      fill = Category_cl, 
+      colour = Category_cl) +
+  geom_point() +
+  scale_fill_manual(values = values) +
+  scale_color_manual(values = values) +
+  scale_x_continuous(trans = "log10") +
+  scale_y_continuous(trans = "log10") +
+  labs(x = "Degree", y = "k", 
+       color = "Gene Category", 
+       fill = "Gene Category") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+
+##############################
+### DegreeDistribution as bin-log-log
+### Start by defining the bins
+##############################
+DD_loglog = Nodes
+DD_loglog %<>% 
+  mutate(logdegree = log10(DD_loglog$degree)) 
+
+calc_breaks = function(min_bin, max_bin, bins = 10 ){
+  res = 10^(seq(min_bin, max_bin,length.out= bins))
+  return(res)
+}
+
+bins = DD_loglog %>%
+  ungroup() %>%
+  group_by(base, Category_cl) %>%
+  summarise(min_bin = min(logdegree),
+            max_bin = max(logdegree)) %>%
+  split(paste(.$base, .$Category_cl, sep = "_")) %>%
+  map(~ calc_breaks(.$min_bin, .$max_bin) ) %>% 
+  bind_rows() %>%
+  mutate( id = 1:n()) %>%
+  pivot_longer(data = ., cols = -id, names_sep = "_", names_to = c("base", "Category_cl")) 
+
+genetype = DD_loglog$Category_cl %>% unique()
+bases = DD_loglog$base %>% unique()
+res = list(); k = 0
+
+for(i in 1:length(genetype)){
+  for(j in 1:length(bases)){
+    
+    bs = bins %>%
+      filter(Category_cl == genetype[i]) %>%
+      filter(base == bases[j]) %>%
+      pull(value)
+    
+    hi = DD_loglog %>%
+      filter(Category_cl == genetype[i]) %>%
+      filter(base == bases[j]) %>%
+      pull(degree) 
+    
+    if(length(hi)> 0){
+      k = k + 1
+      
+      hi %<>%
+        hist(., breaks = bs, plot = F)
+      
+      res[[k]] = data.frame(counts = hi$counts, 
+                            density = hi$density, 
+                            mids = hi$mids, 
+                            Category_cl = genetype[i],
+                            base = bases[j])
+    }
+  }
+}
+
+res %<>% bind_rows()
+
+Fig_S3 = res %>%
+  filter(base %ni% "NCI") %>% 
+  ggplot() +
+  aes(x = mids, 
+      y = density, 
+      colour = Category_cl) +
+  geom_point(shape = "circle", size = 1.5) +
+  geom_smooth(span = 0.75, se = F) +
+  scale_color_manual(values = values) +
+  scale_x_continuous(trans = "log10") +
+  scale_y_continuous(trans = "log10") +
+  theme_minimal() +
+  facet_wrap(vars(base)) +
+  labs (x = "Degree", 
+        y = "Density",
+        color = "Element type") + 
+  theme(legend.position = "bottom", 
+        text = element_text(size = 18, 
+                            family = "HelveticaNeue"),
+        axis.title  = element_text(face = "bold",
+                                   hjust = 0.5, 
+                                   family = "HelveticaNeue"), 
+        axis.title.x.top = element_text(face = "bold", 
+                                        hjust = 0.5, 
+                                        family = "HelveticaNeue"), 
+        strip.text = element_text(face = "bold", 
+                                  hjust = 0.5, 
+                                  family = "HelveticaNeue")) 
+
+Cairo::CairoPDF("../figs/Fig_S3.pdf", width = 10, height = 10)
+Fig_S3
+dev.off()
+```
+
+#### Fit a Power-Law in PPI
+
+```{r, warning=FALSE, message=FALSE}
+g <- gPPI
+data <- degree(g)
+data <- data[data>0]
+
+data.dist <- data.frame(k=0:max(data),p_k=degree_distribution(g))
+data.dist <- data.dist[data.dist$p_k>0,]
+
+m_pl <- displ$new(data)
+est_pl <- estimate_xmin(m_pl)
+
+est_pl$xmin #k_min
+est_pl$pars #gamma
+est_pl$gof #D
+
+data.s <- unique(data)
+
+d_est <- data.frame(K_min=sort(data.s)[1:(length(data.s)-2)], gamma=rep(0,length(data.s)-2), D=rep(0,length(data.s)-2))
+
+for (i in d_est$K_min){
+  d_est[which(d_est$K_min == i),2] <- estimate_xmin(m_pl, xmins = i)$pars
+  d_est[which(d_est$K_min == i),3] <- estimate_xmin(m_pl, xmins = i)$gof
+}
+
+K.min_D.min <- d_est[which.min(d_est$D), 1]
+ggplot(data=d_est, aes(x=K_min, y=D)) +
+  geom_line() +
+  theme_minimal() +
+  geom_vline(xintercept=K.min_D.min, colour="red") +
+  annotate("text", x=K.min_D.min, y=max(d_est$D)/3*2, label=K.min_D.min)
+
+ggplot(data=d_est, aes(x=K_min, y=gamma)) +
+  geom_line() +
+  theme_minimal() +
+  geom_vline(xintercept=K.min_D.min, colour="red") +
+  annotate("text", x=K.min_D.min, y=max(d_est$gamma)/3*2, label=K.min_D.min)
+m_pl$setXmin(est_pl)
+plot.data <- plot(m_pl, draw = F)
+fit.data <- lines(m_pl, draw = F)
+ggplot(plot.data) +
+  geom_point(aes(x=log(x), y=log(y))) +
+  labs(x="log(k)", y="log(CDF)") +
+  theme_minimal() +
+  geom_line(data=fit.data,
+            aes(x=log(x), y=log(y)),
+            colour="red")
+
+## Goodness-of-fit
+# bs_pl <- bootstrap_p(m_pl, no_of_sims=1000, 
+#                      threads=8, 
+#                      seed = 123)
+# #threads=core number of processor that used by function
+# #parallel::detectCores() determines how many cores in your computer
+# 
+# plot(bs_pl)
+# 
+# df_bs_pl <- bs_pl$bootstraps
+# ggplot(data=df_bs_pl, aes(pars)) +
+#   geom_histogram() +
+#   labs(x="gamma", y="frequency") +
+#   theme_minimal()
+# 
+# ggplot(data=df_bs_pl, aes(xmin)) +
+#   geom_histogram() +
+#   labs(x="K_min", y="frequency") +
+#   theme_minimal()
+```
+
+#### Fit a Power-Law in PPI & NCI
+
+```{r, warning=FALSE, message=FALSE}
+g <- gPPInc
+data <- degree(g)
+data <- data[data>0]
+
+data.dist <- data.frame(k=0:max(data),p_k=degree_distribution(g))
+data.dist <- data.dist[data.dist$p_k>0,]
+
+m_pl <- displ$new(data)
+est_pl <- estimate_xmin(m_pl)
+
+est_pl$xmin #k_min
+est_pl$pars #gamma
+est_pl$gof #D
+
+data.s <- unique(data)
+
+d_est <- data.frame(K_min=sort(data.s)[1:(length(data.s)-2)], gamma=rep(0,length(data.s)-2), D=rep(0,length(data.s)-2))
+
+for (i in d_est$K_min){
+  d_est[which(d_est$K_min == i),2] <- estimate_xmin(m_pl, xmins = i)$pars
+  d_est[which(d_est$K_min == i),3] <- estimate_xmin(m_pl, xmins = i)$gof
+}
+
+K.min_D.min <- d_est[which.min(d_est$D), 1]
+ggplot(data=d_est, aes(x=K_min, y=D)) +
+  geom_line() +
+  theme_minimal() +
+  geom_vline(xintercept=K.min_D.min, colour="red") +
+  annotate("text", x=K.min_D.min, y=max(d_est$D)/3*2, label=K.min_D.min)
+
+ggplot(data=d_est, aes(x=K_min, y=gamma)) +
+  geom_line() +
+  theme_minimal() +
+  geom_vline(xintercept=K.min_D.min, colour="red") +
+  annotate("text", x=K.min_D.min, y=max(d_est$gamma)/3*2, label=K.min_D.min)
+m_pl$setXmin(est_pl)
+plot.data <- plot(m_pl, draw = F)
+fit.data <- lines(m_pl, draw = F)
+ggplot(plot.data) +
+  geom_point(aes(x=log(x), y=log(y))) +
+  labs(x="log(k)", y="log(CDF)") +
+  theme_minimal() +
+  geom_line(data=fit.data,
+            aes(x=log(x), y=log(y)),
+            colour="red")
+
+## Goodness-of-fit
+# bs_pl <- bootstrap_p(m_pl, no_of_sims=1000, threads=8, seed = 123)
+# #threads=core number of processor that used by function
+# #parallel::detectCores() determines how many cores in your computer
+# 
+# plot(bs_pl)
+# 
+# df_bs_pl <- bs_pl$bootstraps
+# ggplot(data=df_bs_pl, aes(pars)) +
+#   geom_histogram() +
+#   labs(x="gamma", y="frequency") +
+#   theme_minimal()
+# 
+# ggplot(data=df_bs_pl, aes(xmin)) +
+#   geom_histogram() +
+#   labs(x="K_min", y="frequency") +
+#   theme_minimal()
+```
+
+### Figure S4: Gene completion mapped in the PPI and the combined network.
+
+```{r, warning=FALSE, message=FALSE}
+##############################
+### Understand the percentage of genes
+### that are annotated and also can be found
+### in the networks. 
+##############################
+
+Classificate_Summary = gPPInc %>% 
+  igraph::as_data_frame(., what = "vertices") %>%
+  mutate(Category_Summarised = ifelse(Category_cl %in% 
+                                        c("TF", "Protein Coding"), "Protein Coding", as.character(Category_cl))) %>%
+  mutate(Category_Summarised = ifelse(Category_Summarised %in% 
+                                        c("lncRNA", "miRNA", "ncRNA"), "Non Coding", as.character(Category_Summarised)))
+
+Classificate_Summary %>% 
+  group_by(Category_Summarised) %>%
+  summarise(n = n()) %>%
+  ungroup() %>%
+  mutate(`%` = round(n/sum(n) * 100, 2))
+
+dist_genesncppi = gPPInc %>% 
+  igraph::as_data_frame(., "vertices") %>%
+  ungroup() %>% 
+  select(Symbol = name)  %>%
+  unique() %>% 
+  mutate(NCIPPI = "Yes") %>% 
+  dplyr::full_join(., Annot_Dic) %>%
+  mutate(NCIPPI = ifelse(is.na(NCIPPI), "No", NCIPPI)) %>%
+  group_by(Category_cl, NCIPPI) %>%
+  summarise(n = n())  %>%
+  arrange(n)
+
+Table_dist_genesppi = dist_genesncppi %>%
+  pivot_wider(names_from = NCIPPI, values_from = n) %>%
+  mutate(`% retrieved` = Yes/(Yes + No) * 100) %>%
+  mutate(total = (Yes + No)) %>%
+  arrange(total)
+
+Table_dist_genesppi$Category_cl %<>% factor(., levels = Table_dist_genesppi$Category_cl)
+
+
+Table2 = Annot_Dic %>%
+  select(-color)%>% 
+  mutate(`PPI` = ifelse(Symbol %in% V(gPPI)$name, "Yes", "No")) %>%
+  mutate(`NCI & PPI` = ifelse(Symbol %in% V(gPPInc)$name, "Yes", "No")) %>%
+  select(-Symbol) %>% 
+  pivot_longer(-Category_cl) %>%
+  group_by(Category_cl, name, value) %>%
+  summarise(n = n()) %>%
+  arrange(n)
+
+l = Table2 %>% 
+  filter(name == "NCI & PPI") %>%
+  group_by(Category_cl) %>%
+  summarise(Total = sum(n)) %>%
+  arrange(Total) 
+
+Table2$Category_cl %<>% factor(., levels = l$Category_cl)
+Table2 %<>% dplyr::inner_join(., l) %>%
+  mutate(pct = round(n/Total * 100,1)) %>%
+  mutate(pct_lab = ifelse(value == "No", NA, pct))
+
+lev = Table2 %>% 
+  ungroup %>% 
+  select(Category_cl, Total) %>% 
+  unique() %>%
+  arrange(Total)
+
+Table2$Category_cl %<>% factor(., levels = lev$Category_cl) 
+Fig_s4 = Table2 %>%
+  mutate(name = factor(name, 
+                       levels = c("PPI","NCI & PPI"), 
+                       labels = c("PPI","PPI & NCI"))) %>%
+  mutate(pct_lab = ifelse(!is.na(pct_lab), paste(pct_lab, "%"), "")) %>% 
+  ggplot() +
+  aes(x = Category_cl, 
+      fill = value, 
+      weight = n) +
+  geom_bar() +
+  geom_text(aes(label = pct_lab), 
+            stat = "count", 
+            hjust = 1,
+            colour = "#a4133c") +
+  scale_fill_manual(
+    values = c(No = "#ffccd5",
+               Yes = "#ff4d6d")
+  ) +
+  coord_flip() +
+  theme_minimal() +
+  theme(legend.position = "bottom", 
+        text = element_text(size = 18),
+        axis.title  = element_text(face = "bold",
+                                   hjust = 0.5), 
+        axis.title.x.top = element_text(face = "bold", 
+                                        hjust = 0.5), 
+        strip.text = element_text(face = "bold", 
+                                  hjust = 0.5)) +
+  facet_wrap(vars(name)) +
+  labs(y = "# Genes", 
+       x = "Gene Category", 
+       fill = "In the data base")
+```
+
+```{r, warning=FALSE, message=FALSE}
+Cairo::CairoPDF(paste0("../figs/Fig_S4.pdf"), 
+                height = 5, 
+                width = 15)
+
+Fig_s4
+dev.off()
+```
+
+### Figure 1: The role of ncRNA in gene regulation and connection to the human interactome.
+
+```{r, warning=FALSE, message=FALSE}
+##############################
+### Get Genes Category in the neworks to understand the
+### pattern of gene-gene regulation
+### build a network to viz results
+##############################
+
+gPPInc %<>% 
+  simplify(., remove.multiple = F, remove.loops = TRUE)
+gPPI %<>% 
+  simplify(., remove.multiple = F, remove.loops = TRUE)
+
+edges = gPPInc %>% 
+  as_data_frame(., what = "edges") %>%
+  inner_join(Annot_Dic, by = c(from = "Symbol")) %>%
+  rename(from.type = Category_cl) %>% 
+  inner_join(Annot_Dic, by = c(to = "Symbol")) %>%
+  rename(to.type = Category_cl) %>% 
+  select(from.type, to.type) %>%
+  OrderNames() %>% 
+  group_by(from.type, to.type) %>%
+  summarise(n = n()) %>%
+  ungroup()
+
+nodes = gPPInc %>% 
+  simplify(., remove.multiple = F, remove.loops = TRUE) %>%
+  as_data_frame(., what = "vertices") %>%
+  group_by(Category_cl) %>%
+  summarise(n = n()) %>%
+  ungroup() 
+
+########################### 
+#### Export Networks
+###########################
+save(gPPI, gPPInc, GDA, Annot_Dic, file = "../data/output/graphs.RData")
+
+fig1 = graph_from_data_frame(edges, directed = F, vertices = nodes)
+V(fig1)$size = (V(fig1)$n/max(V(fig1)$n) + 0.1) * 50
+E(fig1)$width = (E(fig1)$n/max(E(fig1)$n) + 0.1) * 10
+
+Cairo::CairoPDF(paste("../figs/Fig_01.pdf"), width = 12, height = 12)
+par(mar=c(0,0,0,0))
+plot(fig1)
+dev.off()
+```
+
+### Text Results: We find that 250 of the 861 diseases are enriched for ncRNAs.
+
+```{r, warning=FALSE, message=FALSE}
+##############################
+### Perform Proportion's test and 
+### multiple correction
+##############################
+Totals = GDA %>% 
+  mutate(category = ifelse(Category_cl %in% c("Protein Coding", "TF"), "PC", as.character(Category_cl))) %>%
+  mutate(category = ifelse(category %in% c('lncRNA',
+                                           'miRNA',
+                                           'ncRNA'),
+                           "NC",
+                           category)) %>%
+  filter(category %in% c("PC", "NC")) %>% 
+  select(category, hgnc_symbol) %>%
+  unique() %>%
+  group_by(category) %>%
+  summarise(n = n()) %>%
+  pivot_wider(names_from = category, 
+              values_from = n)
+
+GDA2Prop = GDA %>% 
+  mutate(category = ifelse(Category_cl %in% c("Protein Coding", "TF"), "PC", as.character(Category_cl))) %>%
+  mutate(category = ifelse(category %in% c('lncRNA',
+                                           'miRNA',
+                                           'ncRNA'),
+                           "NC",
+                           category)) %>%
+  filter(category %in% c("PC", "NC")) %>% 
+  select(DiseaseName, category, hgnc_symbol) %>%
+  unique() %>%
+  group_by(DiseaseName, category) %>%
+  summarise(n = n()) %>%
+  pivot_wider(names_from = category, 
+              values_from = n, 
+              values_fill = 0)  %>% 
+  arrange(desc(NC)) %>%
+  mutate(Total_PC = Totals$PC, 
+         Total_NC = Totals$NC)
+
+GDA2Prop[is.na(GDA2Prop)]<- 0
+fishers.test = function(base = GDA2Prop){
+  tmp = list()
+  for(i in 1:nrow(base)){
+    mat = matrix(c(base$PC[i], 
+                   base$NC[i],  (base$Total_PC[i] - base$PC[i]), 
+                   
+                   (base$Total_NC[i] - base$NC[i])), 
+                 byrow = TRUE, 
+                 ncol = 2)
+    p = fisher.test(mat, alternative = "less")$p.value
+    
+    tmp[[i]] = data.frame(disease= base$DiseaseName[i], p = p)
+  }
+  tmp = bind_rows(tmp)
+  return(tmp)
+}
+
+props.test = function(base = GDA2Prop){
+  tmp = list()
+  for(i in 1:nrow(base)){
+    p = suppressWarnings(prop.test(c(base$NC[i], base$PC[i]),
+                                   c(base$Total_NC[i], base$Total_PC[i]), 
+                                   alternative = "greater", 
+                                   correct = TRUE))$p.value
+    
+    tmp[[i]] = data.frame(disease= base$DiseaseName[i], p = p)
+  }
+  tmp = bind_rows(tmp)
+  return(tmp)
+}
+
+enrich = props.test()
+enrich %<>%
+  mutate(padj = p.adjust(p, method = "fdr"))
+enrich %>% 
+  filter(padj < 0.05) %>% 
+  nrow()
+```
+
+### Figure 2: Disease modules for Rheumatoid Arthritis (RA), Crohn's Disease (CD), and Pre-Eclampsia (PE).
+
+```{r, warning=FALSE, message=FALSE}
+##############################
+### Build the viz of the disease modules
+##############################
+leg = data.frame(color = V(gPPInc)$color, 
+                 type = V(gPPInc)$Category_cl) %>% 
+  unique()
+RAPD = plot_diseases("arthritis rheumatoid")
+CDPD = plot_diseases("crohn disease")
+PEPD = plot_diseases("pre eclampsia")
+```
+
+```{r, warning=FALSE, message=FALSE}
+Cairo::CairoPDF(paste("../figs/Fig_02.pdf"), width = 12, height = 12)
+graphics::layout(mat = matrix(c(1,2,3,
+                                4,5,6, 
+                                7,7,7), ncol = 3, byrow = T), heights = c(3,3,1))
+par(mar = c(0,0,2,0))
+
+g = RAPD$PPI 
+l = layout_with_fr(g, 
+                   weights = E(g)$weight^1/20)
+l <- norm_coords(l, ymin=-1, 
+                 ymax=1, 
+                 xmin=-1, 
+                 xmax=1)
+g %>%
+  plot(., 
+       vertex.size = ifelse(degree(.) == 0, 0.5, (V(.)$size +0.2) *5),
+       vertex.label.cex = (V(.)$size +0.2)*1,
+       edge.curved = 0.1,
+       edge.width = E(.)$width*2 ,
+       edge.weight = E(.)$weight^100, 
+       layout = l)
+title("Rheumatoid Arthritis - PPI")
+
+g = CDPD$PPI 
+l = layout_with_fr(g, 
+                   weights = E(g)$weight^1/20)
+l <- norm_coords(l, ymin=-1, 
+                 ymax=1, 
+                 xmin=-1, 
+                 xmax=1)
+
+g %>%
+  plot(., vertex.size = ifelse(degree(.) == 0, 0.5, (V(.)$size +0.2) *5),
+       vertex.label.cex = (V(.)$size +0.2)*1,
+       # vertex.label = NA,
+       edge.curved = 0.1,
+       edge.width = E(.)$width*2 ,
+       edge.weight = E(.)$weight^100, 
+       layout = l)
+title("Crohn Disease - PPI")
+
+
+g = PEPD$PPI 
+l = layout_with_fr(g, 
+                   weights = E(g)$weight^1/20)
+l <- norm_coords(l, ymin=-1, 
+                 ymax=1, 
+                 xmin=-1, 
+                 xmax=1)
+
+g %>%
+  plot(., vertex.size = ifelse(degree(.) == 0, 0.5, (V(.)$size +0.2) *5),
+       vertex.size = (V(.)$size +0.2) *5,
+       vertex.label.cex = (V(.)$size +0.2)*1,
+       # vertex.label = NA,
+       edge.curved = 0.1,
+       edge.width = E(.)$width*2 ,
+       edge.weight = E(.)$weight^100)
+title("Pre Eclampsia - PPI")
+
+
+g = RAPD$NCIPPI %>% 
+  delete.edges(E(.)[E(.)$width^1.65 < 0.01]) %>%
+  delete.edges(E(.)[E(.)$width^1/2 < 0.03]) 
+l = layout_with_fr(g, 
+                   weights = E(g)$weight^1/20)
+l <- norm_coords(l, ymin=-1, 
+                 ymax=1, 
+                 xmin=-1, 
+                 xmax=1)
+
+g %>%
+  plot(., vertex.size = ifelse(degree(.) == 0, 0.5, (V(.)$size +0.2) *5),
+       vertex.label.cex = (V(.)$size +0.2)*1,
+       # vertex.label = NA,
+       edge.curved = 0.1,
+       edge.width = (E(.)$width^2),
+       edge.weight = E(.)$weight^1/20,
+       layout = l)
+title("Rheumatoid Arthritis - PPI & NCI")
+
+g = CDPD$NCIPPI %>% 
+  delete.edges(E(.)[E(.)$width^1.65 < 0.01]) %>%
+  delete.edges(E(.)[E(.)$width^1/2 < 0.03]) 
+l = layout_with_fr(g, 
+                   weights = E(g)$weight^1/20)
+l <- norm_coords(l, ymin=-1, 
+                 ymax=1, 
+                 xmin=-1, 
+                 xmax=1)
+
+g %>%
+  plot(., vertex.size = ifelse(degree(.) == 0, 0.5, (V(.)$size +0.2) *5),
+       vertex.label.cex = (V(.)$size +0.2)*1,
+       # vertex.label = NA,
+       edge.curved = 0.1,
+       edge.width = (E(.)$width^2),
+       edge.weight = E(.)$weight^1/20,
+       layout = l)
+title("Crohn Disease PPI & NCI")
+
+g = PEPD$NCIPPI %>% 
+  delete.edges(E(.)[E(.)$width^1.65 < 0.01]) %>%
+  delete.edges(E(.)[E(.)$width^1/2 < 0.03]) 
+l = layout_with_fr(g, 
+                   weights = E(g)$weight^1/2)
+# l <- norm_coords(l, ymin=-1, 
+#                  ymax=1, 
+#                  xmin=-1, 
+#                  xmax=1)
+
+g %>%
+  plot(., vertex.size = ifelse(degree(.) == 0, 0.5, (V(.)$size +0.2) *5),
+       vertex.label.cex = (V(.)$size +0.2)*1,
+       # vertex.label = NA,
+       edge.curved = 0.1,
+       edge.width = (E(.)$width^2),
+       edge.weight = E(.)$weight^1/20,
+       layout = l)
+title("Pre Eclampsia PPI & NCI")
+
+plot(1, 1, xlim = c(20,30), 
+     axes = F, 
+     xlab = "",
+     ylab = "")
+legend("bottom",
+       cex = 1.5,
+       # xpd = TRUE,
+       legend = leg$type, 
+       col = leg$color, 
+       pch = 19,
+       bty = "n", 
+       ncol = length(leg$color)
+)
+
+dev.off()
+```
+
+### Figure S5: Disease Associated genes and their classification.
+
+#### Figure S5A: Rainplot of Number of disease-associated genes classified by gene category
+
+```{r, warning=FALSE, message=FALSE}
+##############################
+### Rainplot of Number of disease-associated 
+### genes classified by gene category.
+##############################
+
+GDA_CAT = GDA %>% 
+  select(DiseaseName, Category_cl, hgnc_symbol) %>%
+  unique() %>%
+  group_by(DiseaseName, Category_cl) %>%
+  summarise(n = n()) %>%
+  arrange(desc(n))
+
+
+
+GDA_CAT$Category_cl %<>% factor(., 
+                                levels = c("Protein Coding",
+                                           "TF",
+                                           "Pseudogene",
+                                           "lncRNA",
+                                           "miRNA",
+                                           "other"))
+
+
+
+fig_s5A = GDA_CAT %>% 
+  filter(!(Category_cl %in% "other")) %>%
+  ggplot() +
+  aes(x = Category_cl, 
+      y = n,
+      fill = Category_cl, 
+      color = Category_cl) +
+  geom_half_violin(adjust = 1.5L,
+                   scale = "width",
+                   alpha = 0.5,
+                   side = "r",
+                   position = position_nudge(x = 0.35, y = 0)) +
+  geom_point(
+    position = position_jitterdodge(),
+    shape = "circle",
+    size = .25,
+    alpha = 1) +
+  geom_boxplot(shape = "circle", 
+               alpha = 0.1, 
+               width = 0.25, 
+               outlier.shape = NA) +
+  # expand_limits(x = 5.25) +
+  scale_color_manual(values = values) +
+  scale_fill_manual(values = values) +
+  scale_y_continuous(trans = "log10") + 
+  coord_flip() + 
+  theme_minimal() +
+  labs(x = "Gene Class",
+       y = "# of disease associated genes") + 
+  theme (legend.position = "none", 
+         axis.title  = element_text(face = "bold", hjust = 0.5), 
+         axis.title.x.top =element_text(face = "bold", hjust = 0.5), 
+         strip.text = element_text(face = "bold", hjust = 0.5)); fig_s5A
+```
+
+#### Figure S5B: Degree distribution of gene-disease associations.
+
+```{r, warning=FALSE, message=FALSE}
+##############################
+### Degree distribution of gene-disease associations.
+##############################
+DisDeg = GDA %>% 
+  group_by(hgnc_symbol, Category_cl) %>%
+  summarise(degree = n()) %>%
+  ungroup() %>%
+  group_by(Category_cl, degree) %>%
+  summarise(n = n())
+
+fig_s5B = DisDeg %>%
+  filter(!(Category_cl %in% "other")) %>%
+  ggplot() +
+  aes(
+    x = degree,
+    y = n,
+    fill = Category_cl,
+    colour = Category_cl
+  ) +
+  geom_point(shape = "circle", size = 1.5, alpha = .5) +
+  geom_smooth(span = 0.7, se= F) +
+  scale_color_manual(values = values) +
+  scale_fill_manual(values = 
+                      values) +
+  scale_x_continuous(trans = "log10") +
+  scale_y_continuous(trans = "log10") +
+  theme_minimal() +
+  theme(legend.position = "bottom") + 
+  labs(x = "Degree", y = "#", fill = "Gene Category", color = "Gene Category")+
+  theme (legend.position = "none", 
+         axis.title  = element_text(face = "bold", hjust = 0.5), 
+         axis.title.x.top =element_text(face = "bold", hjust = 0.5), 
+         strip.text = element_text(face = "bold", hjust = 0.5)); fig_s5B
+
+```
+
+#### Figure S5C: The % of genes in each category found in the LCC.
+
+```{r, warning=FALSE, message=FALSE}
+##############################
+### LCC is generated in 01_LCC_Sab.R
+### The % of genes in each category found in the LCC.
+##############################
+
+Out = fread("../data/output/LCC.csv") 
+
+Out %<>% filter(disease %in% GDA$DiseaseName)
+Out %<>%
+  group_by(graph) %>%
+  mutate(padj = p.adjust(p, method = "fdr")) %>%
+  ungroup() %>%
+  mutate(graph = ifelse(graph == "gPPInc", "PPI & NCI", graph)) %>% 
+  mutate(graph = ifelse(graph == "gPPI", "PPI", graph))
+
+
+
+PPI_diseases = Out %>%
+  arrange(disease) %>% 
+  pull(disease) %>% unique()
+
+pb <- progress_bar$new(
+  format = "  Computed [:bar] :percent eta: :eta",
+  total = length(PPI_diseases), 
+  clear = FALSE,
+  width= 60)
+
+LCCs_Distribution_Genes = list()
+for (i in 1:length(PPI_diseases)){
+  pb$tick()
+  tmp_g = GDA %>%
+    filter(DiseaseName %in% PPI_diseases[i]) %>%
+    select(hgnc_symbol, Category_cl)
+  
+  tmp_ppi = gPPI %>%
+    induced.subgraph(., tmp_g$hgnc_symbol[tmp_g$hgnc_symbol %in% V(.)$name]) %>%
+    extract_LCC() %>%
+    as_data_frame("vertices") %>%
+    mutate(disease = PPI_diseases[i]) %>%
+    mutate(graph = "PPI")
+  
+  tmp_ncppi = gPPInc %>%
+    induced.subgraph(., tmp_g$hgnc_symbol[tmp_g$hgnc_symbol %in% V(.)$name]) %>%
+    extract_LCC() %>%
+    as_data_frame("vertices") %>%
+    mutate(disease = PPI_diseases[i]) %>%
+    mutate(graph = "PPI & NCI")
+  
+  LCCs_Distribution_Genes[[i]] = bind_rows(tmp_ppi, tmp_ncppi)
+}
+LCCs_Distribution_Genes %<>% bind_rows()
+
+LCCs_Distribution_Genes_summary = LCCs_Distribution_Genes %>%
+  group_by(Category_cl, disease, graph) %>%
+  summarise(in_LCC = n()) %>%
+  rename(DiseaseName = disease) %>%
+  pivot_wider(names_from = graph, 
+              values_from =  in_LCC, 
+              values_fill = 0, 
+              names_prefix = "in_LCC_")
+
+
+LCCs_Distribution_Genes_summary %<>%
+  dplyr::left_join(., GDA_CAT) %>%
+  mutate(prop_LCC_PPINCI = (`in_LCC_PPI & NCI`/n)*100, 
+         prop_LCC_PPI = (`in_LCC_PPI`/n)*100)
+
+
+LCCs_Distribution_Genes_summary_l = LCCs_Distribution_Genes_summary %>% 
+  select(Category_cl, DiseaseName, starts_with("prop")) %>%
+  pivot_longer(-c(1:2))
+LCCs_Distribution_Genes_summary_l$Category_cl %<>% factor(., 
+                                                          levels = c("Protein Coding",
+                                                                     "TF",
+                                                                     "Pseudogene",
+                                                                     "lncRNA",
+                                                                     "miRNA",
+                                                                     "other"))
+
+
+fig_s5C = LCCs_Distribution_Genes_summary_l %>%
+  mutate(graph = ifelse(name == "prop_LCC_PPINCI", "PPI & NCI", "PPI")) %>% 
+  ggplot() +
+  aes(x = value,
+      y = Category_cl, 
+      fill = graph, 
+      color = graph) +
+  geom_boxplot(alpha = 0.5) +
+  scale_fill_manual(values = PPI_colors) +
+  scale_color_manual(values = PPI_colors) +
+  labs(
+    x = "% of genes in the LCC",
+    y = "Gene Category",
+    fill = "Network", 
+    colour = "Network"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        axis.title  = element_text(
+          face = "bold", 
+          hjust = 0.5), 
+        axis.title.x.top =element_text(
+          face = "bold", 
+          hjust = 0.5), 
+        strip.text = element_text(
+          face = "bold", 
+          hjust = 0.5))
+
+
+```
+
+```{r, warning=FALSE, message=FALSE}
+Cairo::CairoPDF("../figs/Fig_S5.pdf", width = 15, height = 6)
+fig_s5A + fig_s5B + fig_s5C + 
+  plot_annotation(tag_levels = 'A')
+dev.off()
+```
+
+### Figure 3: Uncovering Gene-Disease Associations.
+
+Disease Modules are computed in `01_LCC_Sab.R`.
+
+#### Figure 3A: Euler Plot
+
+```{r, warning=FALSE, message=FALSE}
+##############################
+### Overlap of significant diseases in the PPI and the PPI & NCI
+### Euler plot: Similar to the usual Venn Diagram, 
+### but with proportional areas
+##############################
+
+Euler = list()
+Euler$PPI = Out %>%
+  filter(padj < lccp) %>%
+  filter(graph == "PPI") %>% 
+  pull(disease) 
+Euler$`PPINCI` = Out %>%
+  filter(padj < lccp) %>%
+  filter(graph == "PPI & NCI") %>% 
+  pull(disease) 
+
+require(ggforce)
+teste_eu = eulerr::euler(Euler)
+fig_3A = teste_eu$ellipses %>%
+  mutate(r = a/2) %>%
+  mutate(x = h) %>%
+  mutate(y = k) %>% 
+  mutate(total = c(35, 132)) %>% 
+  mutate(labels = c("PPI", "PPI & NCI")) %>% 
+  
+  ggplot() +
+  geom_circle(aes(x0 = x, y0 = y, r = r, 
+                  fill=labels, 
+                  color = labels), 
+              alpha = .5) +
+  geom_text(aes(x = x, y = y, label = labels)) +
+  geom_text(aes(x = x, y = y - 0.5, label = total)) +
+  scale_fill_manual(values = PPI_colors) + 
+  scale_color_manual(values = PPI_colors) + 
+  coord_fixed() +
+  theme_void() + 
+  theme(legend.position = "none", 
+        text = element_text(size = 18, 
+                            family = "HelveticaNeue"),
+        strip.text = element_text(face = "bold", 
+                                  hjust = 0.5, 
+                                  family = "HelveticaNeue"))
+
+fig_3A
+```
+
+#### Figure 3B: Dumbell Plot
+
+```{r, warning=FALSE, message=FALSE}
+##############################
+### Dumbell plot for rLCC size in the PPI 
+### and in the PPI & NCI
+##############################
+
+PPI_diseases = c("insulin resistance",
+                 "astrocytoma",
+                 "thymoma")
+
+NCIPPI_diseases = c('alopecia', 'anxiety disorders', 
+                    'autoimmune diseases', 'carcinoma endometrioid', 
+                    'celiac disease', 
+                    'cleft lip', 'dementia',
+                    'diabetes gestational', 'glaucoma',
+                    'myocarditis', 'polycystic ovary syndrome', 
+                    'pre eclampsia', "testicular neoplasms",
+                    "pancreatitis" , "osteochondrodysplasias" ,
+                    "neutropenia" , "retinitis pigmentosa")
+
+both_diseases = c('thrombosis', 'stroke', 
+                  'psoriasis', 'parkinson disease', 
+                  'osteoarthritis', 'neuroblastoma', 
+                  'myocardial infarction', 'mood disorders',
+                  'melanoma', 'inflammatory bowel diseases', 
+                  'glioma', 'endometriosis', 'bipolar disorder')
+
+Dis_class = GDA %>% 
+  select(DiseaseName, DiseaseClass = DescriptorName) %>%
+  unique() %>%
+  rename(disease = DiseaseName)
+
+Dis_class_dic = Dis_class$DiseaseClass %>%
+  stringr::str_split("\\|", simplify = T) %>% as.data.frame() %>%
+  mutate(DiseaseName = Dis_class$disease) %>%
+  pivot_longer(., - DiseaseName) %>%
+  filter(value != "") %>%
+  select( - name) %>%
+  group_by(value) %>%
+  mutate(n = n()) %>%
+  ungroup() %>%
+  group_by(DiseaseName) %>%
+  mutate(max = max(n)) %>%
+  filter(n == max) %>%
+  mutate(max_dis = max(value)) %>%
+  filter(max_dis == value) %>%
+  unique() %>%
+  select(1:2) %>%
+  group_by(value) %>%
+  mutate(n = n()) %>%
+  mutate(DiseaseClass = 
+           ifelse(n < 20, "other", value)) %>% 
+  ungroup()
+
+
+prepare_dumbell = Out %>% 
+  dplyr::inner_join(Dis_class) %>% 
+  mutate(rLCC = LCC/Targets * 100) %>% 
+  select(disease, graph, rLCC, DiseaseClass, padj) %>%
+  mutate(label = ifelse(disease %in% Interest, disease, NA)) %>%
+  mutate(size = ifelse(disease %in% Interest, 0.5, 2)) %>%
+  mutate(alpha = ifelse(disease %in% Interest, 0.2, 1))
+
+levels_dis = prepare_dumbell %>%
+  filter(disease %in% c(Interest, PPI_diseases, 
+                        NCIPPI_diseases, both_diseases)) %>% 
+  group_by(disease) %>%
+  summarise(maxrLCC = max(rLCC)) %>%
+  arrange(maxrLCC) %>% 
+  pull(disease) %>% 
+  unique()
+
+fig_3B = prepare_dumbell %>%
+  filter(disease %in% c(Interest, PPI_diseases, 
+                        NCIPPI_diseases, both_diseases)) %>% 
+  mutate(disease = factor(disease, levels = levels_dis)) %>% 
+  mutate(sign = ifelse(padj < lccp, "padj < 0.05", "padj > 0.05")) %>% 
+  ggplot(.) +
+  aes(x = rLCC,
+      y = disease, 
+      color = graph) +  
+  geom_vline(xintercept = 50, color = "#d62828", alpha = 0.3) + 
+  geom_line(aes(group = disease), linewidth = 1, color = "#a1a5a4") +
+  geom_point(shape = 19, size = 5, color = "white") + 
+  geom_point(aes(shape = sign), size = 5) + 
+  scale_color_manual(values = PPI_colors)+ 
+  scale_x_continuous(limits = c(0, 100)) + 
+  scale_shape_manual(values = c(19, 1))+
+  theme_minimal()+
+  theme(legend.position = "bottom") + 
+  labs(x = "rLCC (%)", y = "Disease", shape = element_blank(), color = element_blank())+
+  theme(legend.position = "none", 
+        text = element_text(size = 18, 
+                            family = "HelveticaNeue"),
+        axis.title  = element_text(face = "bold",
+                                   hjust = 0.5, 
+                                   family = "HelveticaNeue"), 
+        axis.title.x.top = element_text(face = "bold", 
+                                        hjust = 0.5, 
+                                        family = "HelveticaNeue"), 
+        strip.text = element_text(face = "bold", 
+                                  hjust = 0.5, 
+                                  family = "HelveticaNeue"))
+fig_3B
+```
+
+#### Figure 3C: Histogram
+
+```{r, warning=FALSE, message=FALSE}
+##############################
+### Histogram of the LCCs in the PPI and in the PPI & NCI
+##############################
+
+fig_3C = Out %>%
+  mutate(label = ifelse(disease %in% Interest, disease, NA)) %>% 
+  mutate(graph = factor(graph,
+                        levels = c("PPI",
+                                   "PPI & NCI"))) %>%
+  filter(padj < lccp) %>%
+  filter(graph != "NCI") %>% 
+  ggplot() +
+  aes(x = LCC,
+      fill = graph, 
+      colour = graph,
+      size = padj,
+      label = label) +
+  geom_histogram(bins = 100, alpha = 0.3) +
+  geom_text_repel( y = 0, 
+                   min.segment.length = 0, 
+                   seed = 777, 
+                   size = 5,
+                   nudge_x = 2,
+                   box.padding = 1,
+                   nudge_y = 2,
+                   segment.curvature = -0.1,
+                   segment.ncp = 30,
+                   segment.angle = 20) + 
+  scale_fill_manual(
+    values = PPI_colors
+  ) +
+  scale_color_manual(
+    values = PPI_colors
+  ) +
+  scale_x_continuous(trans = "log10", 
+                     labels = scales::label_number())+
+  theme_minimal() +
+  labs(y = "Frequency", 
+       x = "LCC size") +
+  facet_wrap(vars(graph), scales = "free_y", ncol = 1L)+
+  theme(legend.position = "none", 
+        text = element_text(size = 18, 
+                            family = "HelveticaNeue"),
+        axis.title  = element_text(face = "bold",
+                                   hjust = 0.5, 
+                                   family = "HelveticaNeue"), 
+        axis.title.x.top = element_text(face = "bold", 
+                                        hjust = 0.5, 
+                                        family = "HelveticaNeue"), 
+        strip.text = element_text(face = "bold", 
+                                  hjust = 0.5, 
+                                  family = "HelveticaNeue"));
+fig_3C
+```
+
+#### Figure 3D: Scatterplot pvalue
+
+```{r, warning=FALSE, message=FALSE}
+##############################
+### Scatterplot of the p-values 
+### in the PPI and the PPI & NCI
+##############################
+
+colors = paste0("#",c("ef476f","f36a6d","f78c6b",
+                      "fbaf69","fdc068","ffd166",
+                      "88ae8c","4d9c9f",
+                      "118ab2","0f96ae",
+                      "0ca1a9","0ab594",
+                      "06d6a0","a1a5a4"))
+
+names(colors) = c(
+  "Cardiovascular Diseases",
+  "Congenital, Hereditary, and Neonatal Diseases and Abnormalities",
+  "Digestive System Diseases" ,
+  "Female Urogenital Diseases and Pregnancy Complications",
+  "Hemic and Lymphatic Diseases",
+  "Mental Disorders" ,
+  "Musculoskeletal Diseases"  ,
+  "Neoplasms"  ,
+  "Nervous System Diseases",
+  "Nutritional and Metabolic Diseases"  ,
+  "Pathological Conditions, Signs and Symptoms"   ,
+  "Respiratory Tract Diseases"   ,
+  "Skin and Connective Tissue Diseases",
+  "other"
+)
+
+colors_original = colors
+
+labels_colors = c(
+  "Cardiovascular",
+  "Congenital",
+  "Digestive" ,
+  "Female",
+  "Lymphatic",
+  "Mental Disorders" ,
+  "Musculoskeletal"  ,
+  "Neoplasms"  ,
+  "Nervous System",
+  "Metabolic"  ,
+  "Pathologies"   ,
+  "Respiratory"   ,
+  "Skin Tissue",
+  "Other"
+)
+
+Out2 = Out %>%
+  select(Targets,
+         disease,
+         graph,
+         LCC,
+         p,
+         padj) %>%
+  pivot_wider(names_from = c(graph),
+              values_from = c(p, padj, LCC, Targets)) %>%
+  na.exclude() %>%
+  janitor::clean_names()
+
+
+
+Out2 %<>% left_join(., Dis_class_dic %>% 
+                      select(disease = DiseaseName, 
+                             DiseaseClass = value)) %>%
+  group_by(DiseaseClass) %>%
+  mutate(n = n()) %>%
+  mutate(DiseaseClass= ifelse(n > 15, DiseaseClass, "Other")) %>%
+  ungroup()
+
+fig_3D = Out2 %>%
+  mutate(label = ifelse(disease %in% Interest, disease, NA)) %>% 
+  mutate(p_ppi_nci = ifelse(padj_ppi_nci < 0.00001, 0.00001, padj_ppi_nci)) %>%
+  mutate(p_ppi = ifelse(padj_ppi < 0.00001, 0.00001, padj_ppi)) %>%
+  ggplot() +
+  aes(y = p_ppi_nci,
+      x = p_ppi,
+      size = lcc_ppi_nci,
+      label = label,
+      color = DiseaseClass) +
+  geom_abline(slope = 1, color = "gray80") +
+  geom_hline(yintercept = 0.05, color = "#d62828", alpha = 0.3) +
+  geom_vline(xintercept = 0.05, color = "#d62828", alpha = 0.3) +
+  geom_point(shape = "circle",
+             alpha = 0.5,
+             show.legend = F
+  ) +
+  geom_text_repel(min.segment.length = 0, 
+                  seed = 777, 
+                  size = 5, nudge_x = .15,
+                  box.padding = 0.5,
+                  nudge_y = 1,
+                  segment.curvature = -0.1,
+                  segment.ncp = 3,
+                  segment.angle = 20) + 
+  scale_size(range = c(0,3), trans = "log2") +
+  scale_y_continuous(trans = "log10",
+                     labels = scales::label_scientific())+
+  scale_x_continuous(trans = "log10",
+                     labels = scales::label_scientific())+
+  
+  labs(y = "pvalue PPI & NCI (FDR corrected)", 
+       x = "pvalue PPI (FDR corrected)",
+       size = "LCC PPI & NCI",
+       color = NULL) +
+  scale_color_manual(values = colors)+
+  theme_minimal() +
+  theme(legend.position = "none", 
+        text = element_text(size = 18, 
+                            family = "HelveticaNeue"),
+        axis.title  = element_text(face = "bold",
+                                   hjust = 0.5, 
+                                   family = "HelveticaNeue"), 
+        axis.title.x.top = element_text(face = "bold", 
+                                        hjust = 0.5, 
+                                        family = "HelveticaNeue"), 
+        strip.text = element_text(face = "bold", 
+                                  hjust = 0.5, 
+                                  family = "HelveticaNeue")) ; fig_3D
+```
+
+#### Figure 3E: Scatterplot Genes vs LCC
+
+```{r, warning=FALSE, message=FALSE}
+##############################
+### Genes associated with disease and the LCC size
+##############################
+
+prepare_scatter_3e = GDA %>% 
+  select(disease = DiseaseName, Total_Genes) %>% 
+  unique() %>%
+  inner_join(Out) %>% 
+  mutate(rLCC = (LCC/Targets)*100) %>% 
+  select(disease, Total_Genes, LCC, rLCC, graph) 
+
+fig_3E = prepare_scatter_3e %>%
+  group_by(graph) %>%
+  mutate(max_rlcc = max(Total_Genes)) %>% 
+  mutate(label = ifelse(Total_Genes == max_rlcc, graph, NA)) %>%
+  mutate(label = ifelse(disease %in% Interest, disease, label)) %>%
+  filter(!(graph %in% "NCI")) %>%
+  ggplot() +
+  aes(x = Total_Genes, 
+      y = LCC, 
+      size = rLCC, 
+      colour = graph, 
+      fill = graph, 
+      label = label) +
+  geom_point(shape = "circle", alpha = 0.5) +
+  geom_text_repel(min.segment.length = 0, 
+                  seed = 777, 
+                  size = 5,
+                  nudge_x = 1,
+                  box.padding = 0.5,
+                  nudge_y = 1,
+                  segment.curvature = -0.1,
+                  segment.ncp = 3,
+                  segment.angle = 20) + 
+  geom_smooth(se = TRUE) + 
+  geom_abline(slope = 1, color = "gray80") +
+  scale_color_manual(values = PPI_colors) + 
+  scale_fill_manual(values = PPI_colors) + 
+  scale_size(range = c(0, 3), guide = "none") + 
+  theme_minimal() +
+  labs(x = "# Genes", y = "LCC")+
+  theme(legend.position = "none", 
+        text = element_text(size = 18, 
+                            family = "HelveticaNeue"),
+        axis.title  = element_text(face = "bold",
+                                   hjust = 0.5, 
+                                   family = "HelveticaNeue"), 
+        axis.title.x.top = element_text(face = "bold", 
+                                        hjust = 0.5, 
+                                        family = "HelveticaNeue"), 
+        strip.text = element_text(face = "bold", 
+                                  hjust = 0.5, 
+                                  family = "HelveticaNeue")); fig_3E
+```
+
+#### Figure 3F: Half Violins
+
+```{r, warning=FALSE, message=FALSE}
+##############################
+### Proportion of non-coding genes.
+##############################
+LCC_NC = Out2 %>%
+  dplyr::inner_join(GDA2Prop, by = c("disease"= "DiseaseName")) %>%
+  mutate(ratio_ncc = NC / (NC + PC))
+
+l = LCC_NC %>%
+  group_by(DiseaseClass) %>%
+  summarise(min = min(ratio_ncc), 
+            max = max(ratio_ncc),
+            med = median(ratio_ncc)) %>%
+  arrange(max, med) %>%
+  select(DiseaseClass)
+
+l %<>% dplyr::inner_join(., 
+                         data.frame(DiseaseClass =
+                                      names(colors), 
+                                    label = labels_colors))
+colors_original = colors
+
+names(colors) = labels_colors
+LCC_NC$DiseaseClass[LCC_NC$DiseaseClass %ni% l$DiseaseClass] <- "Other" 
+
+fig_3F = LCC_NC %>% 
+  mutate(label = 
+           ifelse(disease %in% Interest, disease, NA)) %>% 
+  mutate(DiseaseClass = factor(DiseaseClass, 
+                               levels = c(l$DiseaseClass, "Other"), 
+                               labels = c(l$label, "Other"))) %>% 
+  ggplot() +
+  aes(
+    x = DiseaseClass,
+    y = ratio_ncc * 100,
+    fill = DiseaseClass,
+    colour = DiseaseClass, 
+    label = label
+  ) +
+  geom_half_violin( scale = "width",
+                    side = "r",
+                    alpha = 0.5) +
+  geom_half_point(size = 0.3,
+                  show.legend  = F,
+                  width = 0.5) +
+  geom_text_repel(min.segment.length = 0, 
+                  seed = 777, 
+                  size = 5,
+                  nudge_x = 1,
+                  box.padding = 0.5,
+                  nudge_y = 1,
+                  segment.curvature = -0.1,
+                  segment.ncp = 3,
+                  segment.angle = 20) + 
+  labs(
+    y = "Non Coding Genes Ratio (%)",
+    x = "Disease Class",
+    fill = NULL,
+    color = NULL
+  ) +
+  scale_y_continuous(limits = c(0, 100)) + 
+  scale_color_manual(values = colors) +
+  scale_fill_manual(values = colors) +
+  
+  theme_minimal() +
+  coord_flip() +
+  theme(legend.position = "none", 
+        text = element_text(size = 18, 
+                            family = "HelveticaNeue"),
+        axis.title  = element_text(face = "bold",
+                                   hjust = 0.5, 
+                                   family = "HelveticaNeue"), 
+        axis.title.x.top = element_text(face = "bold", 
+                                        hjust = 0.5, 
+                                        family = "HelveticaNeue"), 
+        strip.text = element_text(face = "bold", 
+                                  hjust = 0.5, 
+                                  family = "HelveticaNeue"))
+fig_3F
+```
+
+### Figure 4: Physically-Interacting genes are co-expressed.
+
+The data is created in `02_Corr.R` and performance is evaluated in `03_Corr_Performance`.
+
+### Figure 5: Disease similarity on the two networks.
+
+Disease Similarities are computed in `01_LCC_Sab.R`.
+
+#### Figure 5A: RA comorbidities
+
+```{r, warning=FALSE, message=FALSE}
+##############################
+### Comorbidities data is derived from
+### doi: 10.1371/journal.pcbi.1000353
+##############################
+
+TDN = fread("../data/input/Comorbidities_RR.csv") %>%
+  janitor::clean_names() %>%
+  rename(x = disease_1, 
+         y = disease_2, 
+         como_p = p_12) %>%
+  rename(RR = `rel_risk_12`) %>%
+  mutate(percent = (co_12/(prev_1 + prev_2 - co_12))*100) 
+
+GeneOverlap = fread("../data/output/SAB_JAC.csv")
+GeneOverlap %<>%
+  mutate(neg = ifelse(Sab < 0, "sab<0", "sab>0")) %>% 
+  group_by(graph, neg) %>%
+  mutate(Sab_norm = CoDiNA::normalize(abs(Sab))) %>%
+  ungroup() %>%
+  select(-neg) %>% 
+  group_by(graph) %>% 
+  mutate(Jac_p = 1-p) %>%
+  select(-p) %>% 
+  rename(Sab_p = pvalue_lt) %>%
+  mutate(graph = ifelse(graph == "gPPInc", "PPI & NCI", graph)) %>% 
+  mutate(graph = ifelse(graph == "gPPI", "PPI", graph)) 
+
+
+GeneOverlap2 = GeneOverlap %>%
+  filter((x %in% Euler$PPI & y %in% Euler$PPI & graph %in% "PPI") | (x %in% Euler$PPINCI & y %in% Euler$PPINCI & graph %in% "PPI & NCI") ) %>% 
+  left_join(TDN) %>% 
+  group_by(graph) %>%
+  mutate(como_padj = p.adjust(como_p, method = "fdr")) %>%
+  mutate(Sab_padj = p.adjust(Sab_p, method = "fdr")) %>%
+  mutate(Jac_padj = p.adjust(Jac_p, method = "fdr")) %>%
+  ungroup() %>% 
+  mutate(sign_sab_jac_sabn = ifelse(Jac_padj < overlapp &
+                                      Sab < 0 &
+                                      Sab_norm >= 0.05 &
+                                      Sab_p < sabp & 
+                                      Jaccard.Index > 0
+                                    , "Jac & Sab & Sabn: sign", "Jac & Sab & Sabn: not sign")) %>%
+  mutate(sign_sab_p = ifelse(Sab_p < sabp &
+                               Sab < 0 , "sab: sign", "sab: not sign")) %>%
+  mutate(sign_sab = ifelse(Sab < 0 , "sab < 0", "sab > 0")) %>%
+  mutate(sign_jac = ifelse(Jaccard.Index > 0 & Jac_padj < overlapp , "jac == 0", "jac > 0")) %>%
+  
+  mutate(group = paste(x, y, sep = " -- ")) %>%
+  mutate(sign_como = ifelse(como_padj < comop, "Como: sign", "Como: not sign")) %>%
+  mutate(sign_sab_jac = ifelse(Jaccard.Index > 0 & Jac_p < overlapp & Sab < 0 & Sab_p < sabp , "Sab & Jac: sign", "Sab & Jac: not sign")) 
+
+
+GeneOverlap2$graph %<>% 
+  factor(., levels = c(  "PPI", "PPI & NCI" ))
+
+GeneOverlap_raw = GeneOverlap2  %>%  
+  filter(!is.na(RR)) 
+
+table(GeneOverlap_raw$sign_sab_jac_sabn, GeneOverlap_raw$sign_como)
+
+nodes_sab_alt = Out %>% 
+  filter(padj < lccp) %>%
+  filter(!(disease %like% "experimental")) %>% 
+  filter(!(disease %like% "chronic")) %>% 
+  filter(!(disease %like% "diffuse")) %>% 
+  filter(graph %in% c("PPI", "PPI & NCI")) %>%
+  mutate(rLCC = LCC/Targets) %>% 
+  select(disease, graph, rLCC) %>% 
+  pivot_wider(names_from = graph, 
+              values_from = rLCC, 
+              names_prefix = "rLCC") %>%
+  mutate(PPI_sig = ifelse(!is.na(rLCCPPI),1,0))%>%
+  mutate(PPI_NCI_sig = ifelse(!is.na(`rLCCPPI & NCI`),1,0)) %>%
+  dplyr::left_join(., Dis_class_dic, by = c("disease" = "DiseaseName")) %>% 
+  dplyr::left_join(., data.frame(DiseaseClass = names(colors_original), color = colors_original), by = c("DiseaseClass" = "DiseaseClass")) 
+
+Sabs_Alternative = GeneOverlap2 %>% 
+  filter(graph %in% c("PPI", "PPI & NCI")) %>%
+  mutate(PPI_DIS = ifelse(graph == "PPI" & x %in% Euler$PPI  & y %in% Euler$PPI, 1,0)) %>% 
+  mutate(NCIPPI_DIS = ifelse(graph == "PPI & NCI" & x %in% Euler$PPINCI  & y %in% Euler$PPINCI, 1,0)) %>%
+  filter(NCIPPI_DIS == 1 | PPI_DIS == 1) %>% 
+  filter(Sab < 0) %>%
+  group_by(graph) %>% 
+  filter(Sab_norm > 0.07) %>% 
+  ungroup() %>% 
+  filter(Jaccard.Index > 0.05) %>%
+  filter(Sab_p < sabp) %>%
+  filter(Jac_padj < overlapp) %>% 
+  filter(x %in% nodes_sab_alt$disease) %>%
+  filter(y %in% nodes_sab_alt$disease)
+```
+
+#### Figure 5B: RA comorbidities Expanded
+
+```{r, warning=FALSE, message=FALSE}
+##############################
+### Create the full SAB network
+##############################
+
+g_sabs_alt = graph_from_data_frame(Sabs_Alternative,
+                                   directed = F, 
+                                   nodes_sab_alt) %>%
+  delete.vertices(., degree(.) == 0 )
+vs = V(g_sabs_alt)
+
+values <- lapply(1:length(vs), function(x) c(V(g_sabs_alt)$PPI_sig[x], V(g_sabs_alt)$PPI_NCI_sig[x]))
+
+V(g_sabs_alt)$frame.color = NA
+E(g_sabs_alt)$color = ifelse(E(g_sabs_alt)$graph == "PPI & NCI", "#ABE4ED", "#B998AE")
+E(g_sabs_alt)$width = abs(E(g_sabs_alt)$Sab) * 2
+E(g_sabs_alt)$weight = abs(E(g_sabs_alt)$Sab)^ 2
+V(g_sabs_alt)$size = degree(g_sabs_alt) %>%
+  CoDiNA::normalize()
+V(g_sabs_alt)$size = (V(g_sabs_alt)$size +0.5)*5
+
+##############################
+### Filter for RA
+##############################
+diseases_2 = g_sabs_alt %>% 
+  neighborhood(., nodes = "arthritis rheumatoid")
+diseases_2
+g_dis_zoom = g_sabs_alt %>% 
+  delete.vertices(., V(.)$name %ni% names(unlist(diseases_2)))
+
+V(g_dis_zoom)$label = V(g_dis_zoom)$name
+
+vs = V(g_dis_zoom)
+values <- lapply(1:length(vs), function(x) c(V(g_dis_zoom)$PPI_sig[x], V(g_dis_zoom)$PPI_NCI_sig[x]))
+
+V(g_dis_zoom)$size = degree(g_dis_zoom) %>%
+  CoDiNA::normalize()
+V(g_dis_zoom)$size = (V(g_dis_zoom)$size +0.5)*8
+
+Cairo::CairoPDF("../figs/Fig_05B.pdf", 
+                width = 15, height = 10)
+par(mfrow = c(1,2), 
+    mar = c(1, 5, 1, 1))
+ll = g_dis_zoom %>% 
+  layout_with_fr(., weights = abs(E(.)$Sab) * 10, 
+                 start.temp = 10) %>%
+  igraph::norm_coords()
+
+V(g_dis_zoom)$label.color = "#686868"
+V(g_dis_zoom)$label = V(g_dis_zoom)$name
+
+vs = V(g_dis_zoom)
+values <- lapply(1:length(vs), function(x) c(V(g_dis_zoom)$PPI_sig[x], V(g_dis_zoom)$PPI_NCI_sig[x]))
+
+E(g_dis_zoom)[!("arthritis rheumatoid" %--% 1:1000)]$color = adjustcolor("gray75", alpha.f = 0.3)
+
+g_dis_zoom %>% 
+  delete_edges(., E(.)[E(.)$PPI_DIS == 0])%>%
+  plot(, 
+       vertex.shape="pie", 
+       vertex.label.dist=1,
+       vertex.pie=values,
+       edge.curved = 0.1, 
+       edge.width = abs(E(.)$Sab) * 15, 
+       layout = ll,
+       vertex.pie.color=list(PPI_colors))
+title("PPI")
+
+g_dis_zoom %>% 
+  delete_edges(., E(.)[E(.)$NCIPPI_DIS == 0])%>%
+  plot(, 
+       vertex.shape="pie", 
+       vertex.label.dist=1,
+       vertex.pie=values,
+       edge.curved = 0.1, 
+       edge.width = abs(E(.)$Sab) * 10, 
+       layout = ll,
+       vertex.pie.color=list(PPI_colors))
+title("PPI & NCI")
+dev.off()
+```
+
+#### Figure 5C: Full Comorbidities Map
+
+```{r, warning=FALSE, message=FALSE}
+g_sabs_alt %>% 
+  delete_edges(., E(.)[E(.)$PPI_DIS == 1]) %>%
+  delete.vertices(., degree(.) == 0)
+
+g_sabs_alt %>% 
+  delete_edges(., E(.)[E(.)$PPI_DIS == 1]) %>%
+  extract_LCC()
+
+g_sabs_alt %>% 
+  delete_edges(., E(.)[E(.)$PPI_DIS == 0])%>%
+  delete.vertices(., degree(.) == 0)
+
+g_sabs_alt %>% 
+  delete_edges(., E(.)[E(.)$PPI_DIS == 0]) %>% 
+  extract_LCC()
+```
+
+```{r, warning=FALSE, message=FALSE}
+Cairo::CairoPDF("../figs/Fig_05C.pdf",
+                width = 18, height = 10)
+
+par(mfrow = c(1,2), 
+    mar = c(0, 0, 5, 0))
+ll = g_sabs_alt %>% 
+  layout_with_fr(., weights = abs(E(.)$Sab_norm) *3) %>%
+  igraph::norm_coords()
+
+V(g_sabs_alt)$label.color = "#686868"
+V(g_sabs_alt)$label = ifelse(V(g_sabs_alt)$name %in% c(Interest), V(g_sabs_alt)$name, NA)
+g_sabs_alt %>% 
+  delete_edges(., E(.)[E(.)$PPI_DIS == 0])%>%
+  plot(,
+       edge.curved = 0.1,
+       vertex.frame.color = V(.)$color,
+       vertex.color = ifelse(V(.)$PPI_sig == 0, "white", V(.)$color),
+       layout = ll, 
+       vertex.size = ifelse(is.na(V(.)$rLCCPPI), 0.5,V(.)$rLCCPPI)*2.5)
+title("PPI")
+
+g_sabs_alt %>% 
+  delete_edges(., E(.)[E(.)$PPI_DIS != 0])%>%
+  plot(,
+       edge.curved = 0.1,
+       vertex.frame.color = V(.)$color,
+       vertex.color = ifelse(V(.)$PPI_NCI_sig == 0, "white", V(.)$color),
+       layout = ll, 
+       vertex.size = ifelse(is.na(V(.)$`rLCCPPI & NCI`), 0.5,V(.)$`rLCCPPI & NCI`)*2.5)
+title("PPI & NCI")
+
+dev.off()
+```

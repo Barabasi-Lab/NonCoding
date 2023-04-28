@@ -1,0 +1,5 @@
+/data/output/*
+.DS_Store
+.gtc.gz
+.gz
+/data/input/GTEx*
