@@ -1,5 +1,5 @@
 # Non-Coding RNAs Improve the Predictive Power of Network Medicine
-## authors Deisy Morselli Gysi and Albert-László Barabási
+## Authors: Deisy Morselli Gysi and Albert-László Barabási
 ## doi:
 
 
