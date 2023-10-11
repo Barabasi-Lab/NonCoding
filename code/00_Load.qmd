@@ -305,11 +305,11 @@ V(gPPI)$degree = degree(gPPI)
 gPPI
 net_caracs = list()
 
-net_caracs$PPI = data.frame(network = "PPI", 
-                            diameter = diameter(gPPI), 
-                            density = edge_density(gPPI, loops=TRUE), 
-                            components = components(gPPI)$no, 
-                transitivity = igraph::transitivity(gPPI), 
+net_caracs$PPI = data.frame(network = "PPI",
+                            diameter = diameter(gPPI),
+                            density = edge_density(gPPI, loops=TRUE),
+                            components = components(gPPI)$no,
+                transitivity = igraph::transitivity(gPPI),
                 largest_cliques = clique_num(gPPI))
 
 x = igraph::clusters(gPPI)
@@ -328,11 +328,11 @@ gPPInc = graph_from_data_frame(NCPPI, directed = F,
 V(gPPInc)$degree = degree(gPPInc)
 gPPInc
 
-net_caracs$PPI_NCI = data.frame(network = "PPI & NCI", 
-                            diameter = diameter(gPPInc), 
-                            density = edge_density(gPPInc, loops=TRUE), 
-                            components = components(gPPInc)$no, 
-                transitivity = igraph::transitivity(gPPInc), 
+net_caracs$PPI_NCI = data.frame(network = "PPI & NCI",
+                            diameter = diameter(gPPInc),
+                            density = edge_density(gPPInc, loops=TRUE),
+                            components = components(gPPInc)$no,
+                transitivity = igraph::transitivity(gPPInc),
                 largest_cliques = clique_num(gPPInc))
 
 x = igraph::clusters(gPPInc)
@@ -345,10 +345,10 @@ dist[upper.tri(dist, diag = T)] <- NA
 net_caracs$PPI_NCI$av_sp = mean(dist, na.rm = T)
 
 
-net_caracs %>% 
-  bind_rows() %>% 
-    pivot_longer(cols = - network) %>% 
-    pivot_wider(., names_from = network) %>% 
+net_caracs %>%
+  bind_rows() %>%
+    pivot_longer(cols = - network) %>%
+    pivot_wider(., names_from = network) %>%
   knitr::kable()
 
 ```
@@ -674,6 +674,9 @@ res %<>%
   mutate(tick = cumsum(tick))
 
 
+```
+
+```{r}
 Fig_S3 = res %>%
   filter(base %ni% "NCI") %>% 
   ggplot() +
@@ -681,14 +684,14 @@ Fig_S3 = res %>%
       y = density, 
       colour = Category_cl) +
   geom_point(shape = "circle", size = 1.5) +
-  geom_smooth(span = 0.75, se = F) +
+  geom_smooth(span = 0.75, se = F, linewidth = 0.5) +
   scale_color_manual(values = values) +
   scale_x_continuous(trans = "log10") +
   scale_y_continuous(trans = "log10") +
   theme_minimal() +
   facet_wrap(vars(base)) +
-  labs (x = "Degree", 
-        y = "P < k",
+  labs (x = "k", 
+        y = "p(k)",
         color = "Element type") + 
   theme(legend.position = "bottom", 
         text = element_text(size = 18, 
@@ -711,549 +714,13 @@ dev.off()
 ### Figure S4: Fit a Power-Law
 
 ```{r}
-pk <- function(kcut, kprime, ksat, gamma){
-  p_k = 1 / (sum((kprime + ksat)^-gamma * exp (-kprime/kcut))) * (kprime + ksat)^-gamma * exp (-kprime/kcut) 
-  return(p_k)
-}
-
-
-PLD = function(g = gPPI, 
-               category = "Protein Coding", 
-               boot = 1000, 
-               col = NULL){
-  threads = parallel::detectCores()
-  message("We detected ", threads, " threads. All will be used.")
-  
-  if(is.null(col)){
-    col = values[names(values) %in% category] 
-  }
-  
-  out = list()
-  
-  data.dist = igraph::as_data_frame(g, what = "vertices") %>% 
-    filter(Category_cl %in% category) %>% 
-    group_by(degree) %>% 
-    summarise(f = n()) %>% 
-    ungroup() %>%
-    mutate(p_k = f/sum(f)) %>% 
-    mutate(cump_k = cumsum(p_k)) %>% 
-    select(k = degree, p_k, cump_k) %>% 
-    mutate(S_k = 1 - cump_k + p_k)
-  
-  out$data = data.dist
-  
-  data = igraph::as_data_frame(g, what = "vertices") %>% 
-    filter(Category_cl == category)
-  
-  message("Calculating k_min.")
-  m_pl <- displ$new(data$degree)
-  est_pl <- estimate_xmin(m_pl)
-  
-  out$pars$k_min  = est_pl$xmin #k_min
-  out$pars$gamma  = est_pl$pars #gamma
-  out$pars$gof    = est_pl$gof  #D
-  
-  data.s <- unique(data$degree)
-  
-  d_est <- data.frame(K_min=sort(data.s)[1:(length(data.s)-2)], 
-                      gamma=rep(0,length(data.s)-2), 
-                      D=rep(0,length(data.s)-2))
-  
-  for (i in d_est$K_min){
-    d_est[which(d_est$K_min == i),2] <- 
-      estimate_xmin(m_pl, 
-                    xmins = i)$pars
-    d_est[which(d_est$K_min == i),3] <- 
-      estimate_xmin(m_pl, 
-                    xmins = i)$gof
-  }
-  
-  K.min_D.min <- d_est[which.min(d_est$D), 1]
-  p_k_min = ggplot(data=d_est, 
-                   aes(x=K_min, y=D)) +
-    geom_line(color = col) +
-    geom_vline(xintercept=K.min_D.min, 
-               colour="gray20") +
-    annotate("text", 
-             x=K.min_D.min, 
-             y=max(d_est$D)/3*2, 
-             label=K.min_D.min) + 
-    theme_minimal() +
-    theme(text = element_text(size = 18),
-          axis.title  = element_text(
-            face = "bold", 
-            hjust = 0.5), 
-          axis.title.x.top =element_text(
-            face = "bold", 
-            hjust = 0.5), 
-          strip.text = element_text(
-            face = "bold", 
-            hjust = 0.5))
-  
-  p_gamma = ggplot(data=d_est, aes(x=K_min, y=gamma)) +
-    geom_line(color = col) +
-    geom_vline(xintercept=K.min_D.min, colour="gray20") +
-    annotate("text", 
-             x=K.min_D.min, 
-             y=max(d_est$gamma)/3*2, 
-             label=K.min_D.min) + 
-    theme_minimal() +
-    theme(text = element_text(size = 18),
-          axis.title  = element_text(
-            face = "bold", 
-            hjust = 0.5), 
-          axis.title.x.top =element_text(
-            face = "bold", 
-            hjust = 0.5), 
-          strip.text = element_text(
-            face = "bold", 
-            hjust = 0.5))
-  
-  m_pl$setXmin(est_pl)
-  plot.data <- plot(m_pl, draw = F)
-  fit.data <- lines(m_pl, draw = F)
-  
-  message("Goodness-of-fit for k_min.")
-  # Goodness-of-fit
-  bs_pl <- bootstrap_p(m_pl, 
-                       no_of_sims=boot,
-                       threads=threads,
-                       seed = 123)
-  
-  df_bs_pl <- bs_pl$bootstraps
-  
-  p_cdf = ggplot(plot.data) +
-    geom_point(aes(x=log10(x), y=log10(y)), 
-               color = col, size = 2) +
-    labs(x="log (k)", 
-         y="log (CDF)", 
-         subtitle = paste("Gamma = ", round(est_pl$pars,2),
-                          "GOF = ", round(bs_pl$gof,2),
-                          "\np = ", round(bs_pl$p,2), 
-                          "k_min = ", est_pl$xmin
-         )) +
-    geom_line(data=fit.data,
-              aes(x=log10(x), y=log10(y)),
-              colour="gray20") + 
-    theme_minimal() +
-    theme(text = element_text(size = 18),
-          axis.title  = element_text(
-            face = "bold", 
-            hjust = 0.5), 
-          axis.title.x.top =element_text(
-            face = "bold", 
-            hjust = 0.5), 
-          strip.text = element_text(
-            face = "bold", 
-            hjust = 0.5))
-  
-  p_gamma_boot = ggplot(data=df_bs_pl, aes(pars)) +
-    geom_histogram(color = col, fill = col, alpha = 0.5) +
-    labs(x="gamma", y="frequency") +
-    theme_minimal() + 
-    theme(text = element_text(size = 18),
-          axis.title  = element_text(
-            face = "bold", 
-            hjust = 0.5), 
-          axis.title.x.top =element_text(
-            face = "bold", 
-            hjust = 0.5), 
-          strip.text = element_text(
-            face = "bold", 
-            hjust = 0.5))
-  
-  p_kmin_boot = ggplot(data=df_bs_pl, aes(xmin)) +
-    geom_histogram(color = col, fill = col, alpha = 0.5) +
-    labs(x="K_min", y="frequency") +
-    theme_minimal() + 
-    theme(text = element_text(size = 18),
-          axis.title  = element_text(
-            face = "bold", 
-            hjust = 0.5), 
-          axis.title.x.top =element_text(
-            face = "bold", 
-            hjust = 0.5), 
-          strip.text = element_text(
-            face = "bold", 
-            hjust = 0.5))
-  
-  data.s <- data.dist$k
-  
-  message("Defining k_cut and k_sat.")
-  #####
-  # #generate kmin & kmax pairs
-  k_mins = data.s[data.s <= min(est_pl$xmin, 10)]
-  k_max = data.s[(length(data.s)-5) : length(data.s)]
-  pairs <- expand.grid(k_mins, k_max)
-  
-  #scan D for all kmin-kmax pairs
-  
-  find_ks = function(i){
-    require(poweRlaw)
-    m_pl$setXmin(pairs[i,1])
-    est = estimate_xmin(m_pl, 
-                        xmin = pairs[i,1],
-                        xmax = pairs[i,2],
-                        distance = "ks")
-    
-    out = data.frame(xmin = pairs[i,1],
-                     xmax = pairs[i,2],
-                     D = est$gof,
-                     gamma = est$pars)
-  }
-  
-  k_scan = new.env()
-  assign("m_pl", m_pl, envir = k_scan)
-  assign("pairs", pairs, envir = k_scan)
-  
-  require(parallel)
-  
-  cl = parallel::makePSOCKcluster(threads)
-  clusterExport(cl, "pairs", envir = k_scan)
-  clusterExport(cl, "m_pl", envir = k_scan)
-  pairs = clusterApplyLB(cl, 1:nrow(pairs), find_ks) %>%
-    bind_rows()
-  
-  stopCluster(cl)
-  
-  
-  p_detect_pairs = pairs %>% 
-    mutate(xmax_cat = as.factor(xmax)) %>% 
-    ggplot() +
-    aes(x = xmin, 
-        y = D, 
-        colour = xmax_cat, 
-        shape = xmax_cat) +
-    geom_point(size = 1.5) +
-    scale_color_hue() +
-    theme_minimal() +
-    labs(x = "K_sat", y = "D", color = "K_cut", shape = "K_cut") + 
-    theme(legend.position = "bottom",
-      text = element_text(size = 18),
-          axis.title  = element_text(
-            face = "bold", 
-            hjust = 0.5), 
-          axis.title.x.top =element_text(
-            face = "bold", 
-            hjust = 0.5), 
-          strip.text = element_text(
-            face = "bold", 
-            hjust = 0.5))
-  
-  message("Goodness-of-fit for k_cut and k_sat.")
-  bs_pl_sat_cut <- bootstrap_p(m_pl,
-                               xmins = pairs[which.min(pairs$D), 1],
-                               xmax = pairs[which.min(pairs$D), 2],
-                               no_of_sims = boot,
-                               threads = threads, 
-                               seed = 123)
-  
-  bs_pl_sat_cut$p -> out$pars_real$pvalue#p-value
-  
-  pairs[which.min(pairs$D), 1] -> out$pars_real$k_sat
-  pairs[which.min(pairs$D), 2] -> out$pars_real$k_cut
-  pairs[which.min(pairs$D), 3] -> out$pars_real$D
-  pairs[which.min(pairs$D), 4] -> out$pars_real$gamma
-  
-  
-  
-  pk_fit = data.frame(pk_fit = pk(ksat = out$pars_real$k_sat, 
-                                  kcut = out$pars_real$k_cut, 
-                                  gamma = out$pars_real$gamma, 
-                                  kprime = data.s), 
-                      k = data.s) 
-  
-  out$pk_fit = dplyr::left_join(out$data, pk_fit) %>%
-    mutate(cump_kfit = cumsum(pk_fit)) %>%
-    mutate(S_kfit = 1 - cump_kfit + pk_fit) 
-  
-  p_fit = out$pk_fit %>%
-    ggplot() +
-    aes(x = k, y = p_k) +
-    geom_point(shape = "circle",
-               size = 2, alpha = 0.5, color = col) +
-    geom_line(aes(x = k, 
-                  y=pk_fit), 
-              linewidth = 2,
-              color = "red") +
-    scale_x_continuous(trans = "log10") +
-    scale_y_continuous(trans = "log10") +
-    labs(x="log10 (k)", 
-         y="log10 (p_k)", 
-         subtitle = paste("Gamma = ", round(out$pars_real$gamma,2),
-                          "GOF = ", round(out$pars_real$D,2),
-                          "\np = ", round(out$pars_real$pvalue,2), 
-                          "k_sat = ", out$pars_real$k_sat, 
-                          "k_cut = ", out$pars_real$k_cut
-         )) +
-    theme_minimal() +
-    theme(legend.position = "none", 
-          text = element_text(size = 18),
-          axis.title  = element_text(
-            face = "bold", 
-            hjust = 0.5), 
-          axis.title.x.top =element_text(
-            face = "bold", 
-            hjust = 0.5), 
-          strip.text = element_text(
-            face = "bold", 
-            hjust = 0.5))
-  
-  
-  out$plots = list(p_k_min,
-                   p_gamma, 
-                   p_cdf, 
-                   p_gamma_boot, 
-                   p_kmin_boot, 
-                   p_detect_pairs, 
-                   p_fit)
-  
-  out$boots = list(p = bs_pl$p, 
-                   gof = bs_pl$gof)
-  
-  out$boots_real = list(p = bs_pl_sat_cut$p, 
-                        gof = bs_pl_sat_cut$gof)
-  message("\nDone.")
-  return(out)
-}
-```
-
-```{r}
-B = 1000
-## gPPI PC
-PLD_PPI_PC  = PLD(g = gPPI, 
-                  category = "Protein Coding", 
-                  boot = B)
-
-## gPPI TF
-PLD_PPI_TF  = PLD(g = gPPI, 
-                  category = "TF", 
-                  boot = B)
-
-## gPPInc PC
-PLD_PPINC_PC  = PLD(g = gPPInc, 
-                    category = "Protein Coding", 
-                    boot = B)
-
-## gPPInc TF
-PLD_PPINC_TF  = PLD(g = gPPInc, 
-                    category = "TF", 
-                    boot = B)
-
-## gPPInc lncRNA
-PLD_PPINC_lncRNA  = PLD(g = gPPInc, 
-                        category = "lncRNA", 
-                        boot = B)
-
-## gPPInc miRNA
-PLD_PPINC_miRNA  = PLD(g = gPPInc, 
-                       category = "miRNA", 
-                       boot = B)
-
-## gPPInc Pseudogene
-PLD_PPINC_pseudo  = PLD(g = gPPInc, 
-                        category = "Pseudogene", 
-                        boot = B)
-## gPPInc other
-PLD_PPINC_other  = PLD(g = gPPInc, 
-                       category = "other", 
-                       boot = B)
-
-
-```
-
-```{r}
-Cairo::CairoPDF("../figs/PL_PPI_PC.pdf", width = 15, height = 10)
-PLD_PPI_PC$plots[[1]] + PLD_PPI_PC$plots[[2]] + PLD_PPI_PC$plots[[4]] + PLD_PPI_PC$plots[[5]] + PLD_PPI_PC$plots[[6]] + PLD_PPI_PC$plots[[7]] + plot_annotation(tag_levels =  "A", title = "PPI - Protein Coding")
-dev.off()
-
-Cairo::CairoPDF("../figs/PL_PPI_TF.pdf", width = 15, height = 10)
-PLD_PPI_TF$plots[[1]] + PLD_PPI_TF$plots[[2]] +  PLD_PPI_TF$plots[[4]] + PLD_PPI_TF$plots[[5]] + PLD_PPI_TF$plots[[6]] +
-  PLD_PPI_TF$plots[[7]] + plot_annotation(tag_levels =  "A", title = "PPI - TF")
-dev.off()
-
-Cairo::CairoPDF("../figs/PL_PPINC_PC.pdf", width = 15, height = 10)
-PLD_PPINC_PC$plots[[1]] + PLD_PPINC_PC$plots[[2]] + PLD_PPINC_PC$plots[[4]] + PLD_PPINC_PC$plots[[5]] + PLD_PPINC_PC$plots[[6]] + PLD_PPINC_PC$plots[[7]] + plot_annotation(tag_levels =  "A", title = "PPI & NCI - Protein Coding")
-dev.off()
-
-Cairo::CairoPDF("../figs/PL_PPINC_TF.pdf", width = 15, height = 10)
-PLD_PPINC_TF$plots[[1]] + PLD_PPINC_TF$plots[[2]] +  PLD_PPINC_TF$plots[[4]] + PLD_PPINC_TF$plots[[5]] + PLD_PPINC_TF$plots[[6]] + PLD_PPINC_TF$plots[[7]] + plot_annotation(tag_levels =  "A", title = "PPI & NCI - TF")
-dev.off()
-
-Cairo::CairoPDF("../figs/PL_PPINC_lncRNA.pdf", width = 15, height = 10)
-PLD_PPINC_lncRNA$plots[[1]] + PLD_PPINC_lncRNA$plots[[2]] + PLD_PPINC_lncRNA$plots[[4]] + PLD_PPINC_lncRNA$plots[[5]] + PLD_PPINC_lncRNA$plots[[6]] + PLD_PPINC_lncRNA$plots[[7]] + plot_annotation(tag_levels =  "A", title = "PPI & NCI - lncRNA")
-dev.off()
-
-Cairo::CairoPDF("../figs/PL_PPINC_miRNA.pdf", width = 15, height = 10)
-PLD_PPINC_miRNA$plots[[1]] + PLD_PPINC_miRNA$plots[[2]] + PLD_PPINC_miRNA$plots[[4]] + PLD_PPINC_miRNA$plots[[5]] + PLD_PPINC_miRNA$plots[[6]] + PLD_PPINC_miRNA$plots[[7]] + plot_annotation(tag_levels =  "A", title = "PPI & NCI - miRNA")
-dev.off()
-
-Cairo::CairoPDF("../figs/PL_PPINC_pseu.pdf", width = 15, height = 10)
-PLD_PPINC_pseudo$plots[[1]] + PLD_PPINC_pseudo$plots[[2]] + PLD_PPINC_pseudo$plots[[4]] + PLD_PPINC_pseudo$plots[[5]] + PLD_PPINC_pseudo$plots[[6]] + 
-  PLD_PPINC_pseudo$plots[[7]] + plot_annotation(tag_levels =  "A", title = "PPI & NCI - Pseudogenes")
-dev.off()
-
-Cairo::CairoPDF("../figs/PL_PPINC_other.pdf", width = 15, height = 10)
-PLD_PPINC_other$plots[[1]] + PLD_PPINC_other$plots[[2]] + PLD_PPINC_other$plots[[4]] + PLD_PPINC_other$plots[[5]] + PLD_PPINC_other$plots[[6]] +
-  PLD_PPINC_other$plots[[7]] +plot_annotation(tag_levels =  "A", title = "PPI & NCI - Other")
-dev.off()
-```
-
-
-
-```{r}
-PLD_PPI = PLD(g = gPPI, 
-              category = unique(V(gPPI)$Category_cl), 
-              col = "#8D3B72")
-
-PLD_NCPPI = PLD(g = gPPInc, 
-                category = unique(V(gPPInc)$Category_cl), 
-                col = "#72E1D1")
-```
-
-```{r}
-fits = list()
-
-fits[[1]] = PLD_PPI_PC$pk_fit %>% 
-  mutate(network = "PPI", type = "Protein Coding")
-fits[[1]] %<>%  
-  bind_cols(., PLD_PPI_PC$pars_real %>% 
-  as.data.frame())
-
-fits[[2]] = PLD_PPINC_PC$pk_fit %>% 
-  mutate(network = "PPI & NCI", type = "Protein Coding")
-fits[[2]] %<>%  
-  bind_cols(., PLD_PPINC_PC$pars_real %>% 
-  as.data.frame())
-
-fits[[3]] = PLD_PPI_TF$pk_fit %>% 
-  mutate(network = "PPI", type = "TF")
-fits[[3]] %<>%  
-  bind_cols(., PLD_PPI_TF$pars_real %>% 
-  as.data.frame())
-
-fits[[4]] = PLD_PPINC_TF$pk_fit %>% 
-  mutate(network = "PPI & NCI", type = "TF")
-fits[[4]] %<>%  
-  bind_cols(., PLD_PPINC_TF$pars_real %>% 
-  as.data.frame())
-
-fits[[5]] = PLD_PPINC_lncRNA$pk_fit %>% 
-  mutate(network = "PPI & NCI", type = "lncRNA")
-fits[[5]] %<>%  
-  bind_cols(., PLD_PPINC_lncRNA$pars_real %>% 
-  as.data.frame())
-
-fits[[6]] = PLD_PPINC_miRNA$pk_fit %>% 
-  mutate(network = "PPI & NCI", type = "miRNA")
-fits[[6]] %<>%  
-  bind_cols(., PLD_PPINC_miRNA$pars_real %>% 
-  as.data.frame())
-
-fits[[7]] = PLD_PPINC_other$pk_fit %>% 
-  mutate(network = "PPI & NCI", type = "other")
-fits[[7]] %<>%  
-  bind_cols(., PLD_PPINC_other$pars_real %>% 
-  as.data.frame())
-
-fits[[8]] = PLD_PPINC_pseudo$pk_fit %>% 
-  mutate(network = "PPI & NCI", type = "Pseudogene")
-fits[[8]] %<>%  
-  bind_cols(., PLD_PPINC_pseudo$pars_real %>% 
-  as.data.frame())
-
-
-fits[[9]] = PLD_NCPPI$pk_fit %>% 
-  mutate(network = "PPI & NCI", type = "PPI & NCI")
-fits[[9]] %<>%  
-  bind_cols(., PLD_NCPPI$pars_real %>% 
-  as.data.frame())
-
-fits[[10]] = PLD_PPI$pk_fit %>% 
-  mutate(network = "PPI", type = "PPI")
-fits[[10]] %<>%  
-  bind_cols(., PLD_PPI$pars_real %>% 
-  as.data.frame())
-
-fits %<>% bind_rows()
-```
-
-```{r}
-p_sk = fits %>%
-  ggplot() +
-  aes(x = k, y = S_k, colour = type) +
-  geom_point(pch = 19, size = 1.5, alpha = 0.2) +
-  geom_line(linewidth = 2, aes(x = k, y = S_kfit), col = "red") +
-  scale_color_manual(values = c(PPI_colors, values)) +
-  scale_x_continuous(trans = "log10", , labels = scales::label_log()) +
-  scale_y_continuous(trans = "log10", limits = c(min(fits$S_k), 1), labels = scales::label_log()) +
-  theme_minimal() +
-  facet_wrap(vars(network, type))+
-  labs(x="log10 (k) ", y="log10(1 - CDF)") +
-  theme(legend.position = "bottom", 
-        text = element_text(size = 18),
-        axis.title  = element_text(
-          face = "bold", 
-          hjust = 0.5), 
-        axis.title.x.top =element_text(
-          face = "bold", 
-          hjust = 0.5), 
-        strip.text = element_text(
-          face = "bold", 
-          hjust = 0.5))
-```
-
-```{r}
-Cairo::CairoPDF("../figs/FigS4.pdf", width = 15, height = 10)
-p_sk
-dev.off()
-```
-
-```{r}
-## Get pars
-## 
-fits_ps = list()
-
-fits_ps[[1]] = PLD_PPI_PC$pars_real %>% as.data.frame() %>% 
-  mutate(network = "PPI", type = "Protein Coding")
-
-fits_ps[[2]] = PLD_PPINC_PC$pars_real %>% as.data.frame() %>% 
-  mutate(network = "PPI & NCI", type = "Protein Coding")
-
-fits_ps[[3]] = PLD_PPI_TF$pars_real %>% as.data.frame() %>% 
-  mutate(network = "PPI", type = "TF")
-
-fits_ps[[4]] = PLD_PPINC_TF$pars_real %>% as.data.frame() %>% 
-  mutate(network = "PPI & NCI", type = "TF")
-
-fits_ps[[5]] = PLD_PPINC_lncRNA$pars_real %>% as.data.frame() %>% 
-  mutate(network = "PPI & NCI", type = "lncRNA")
-
-fits_ps[[6]] = PLD_PPINC_miRNA$pars_real %>% as.data.frame() %>% 
-  mutate(network = "PPI & NCI", type = "miRNA")
-
-fits_ps[[7]] = PLD_PPINC_other$pars_real %>% as.data.frame() %>% 
-  mutate(network = "PPI & NCI", type = "other")
-
-fits_ps[[8]] = PLD_PPINC_pseudo$pars_real %>% as.data.frame() %>% 
-  mutate(network = "PPI & NCI", type = "Pseudogene")
-
-
-fits_ps[[9]] = PLD_NCPPI$pars_real %>% as.data.frame() %>% 
-  mutate(network = "PPI & NCI", type = "PPI & NCI")
-
-fits_ps[[10]] = PLD_PPI$pars_real %>% as.data.frame() %>% 
-  mutate(network = "PPI", type = "PPI")
-
-
-fits_ps %<>% bind_rows()
+## 00_PL_fit.R
 ```
 
 ### Table S6: Power Law Gamma
+
 ```{r}
-fits_ps %>% 
-  select(network, type, gamma, pvalue) %>% 
-  knitr::kable()
+## 00_PL_fit.R
 ```
 
 ### Figure S4: Gene completion mapped in the PPI and the combined network.
@@ -1401,7 +868,7 @@ nodes = gPPInc %>%
   as_data_frame(., what = "vertices") %>%
   group_by(Category_cl) %>%
   summarise(n = n()) %>%
-  ungroup() 
+  ungroup()
 
 ########################### 
 #### Export Networks
@@ -1656,7 +1123,7 @@ dev.off()
 
 ```{r}
 GDA_tmp = GDA %>% 
-  select(DiseaseName, hgnc_symbol, evidence) 
+  select(DiseaseName, hgnc_symbol, evidence = evidences) 
 
 GDA_tmp = GDA_tmp$evidence %>% 
   stringr::str_split(., "\\|", simplify = TRUE) %>%
@@ -1688,7 +1155,7 @@ GDA_CAT = GDA %>%
   arrange(desc(n))
 
 
-
+GDA_CAT$Category_cl[GDA_CAT$Category_cl == ""] <- "other" 
 GDA_CAT$Category_cl %<>% factor(., 
                                 levels = c("Protein Coding",
                                            "TF",
@@ -1749,6 +1216,7 @@ DisDeg = GDA %>%
 
 fig_s6B = DisDeg %>%
     filter(!(Category_cl %in% "other")) %>%
+    filter(!(Category_cl %in% "")) %>%
     ggplot() +
     aes(
         x = degree,
@@ -1757,12 +1225,12 @@ fig_s6B = DisDeg %>%
         colour = Category_cl
     ) +
     geom_point(shape = "circle", size = 1.5, alpha = .5) +
-    geom_smooth(span = 1, se= F, method = "gam") +
     scale_color_manual(values = values) +
     scale_fill_manual(values = 
                           values) +
     scale_x_continuous(trans = "log10") +
-    scale_y_continuous(trans = "log10", limits  = c(1, 3000)) +
+    scale_y_continuous(trans = "log10", 
+                       limits  = c(1, 3000)) +
     theme_minimal() +
     theme(legend.position = "bottom") + 
     labs(x = "Degree", y = "#", fill = "Gene Category", color = "Gene Category")+
@@ -1858,6 +1326,7 @@ LCCs_Distribution_Genes_summary_l$Category_cl %<>% factor(.,
 
 fig_s6C = LCCs_Distribution_Genes_summary_l %>%
   mutate(graph = ifelse(name == "prop_LCC_PPINCI", "PPI & NCI", "PPI")) %>% 
+  filter(Category_cl != "other") %>% 
   ggplot() +
   aes(x = value,
       y = Category_cl, 
@@ -2619,4 +2088,8 @@ g_sabs_alt %>%
 title("PPI & NCI")
 
 dev.off()
+```
+
+```{r}
+sessionInfo()
 ```
